@@ -1,0 +1,28 @@
+# ==========================================================================
+#  Python 依赖清单
+#  安装：pip install -r requirements.txt
+# ==========================================================================
+
+# 核心依赖：浏览器自动化。Selenium 4 自带 Selenium Manager，
+# 会自动下载匹配的 chromedriver，无需手动放置 driver 文件。
+selenium>=4.19.0
+
+# --------------------------------------------------------------------------
+# 说明
+# --------------------------------------------------------------------------
+# 1. 报告与结果输出零额外依赖
+#      HTML 报告走工程内置的 Common/HTMLTestReportCN.py，
+#      JUnit XML 走 Common/junitReport.py（纯标准库 xml.etree 实现）。
+#      所以流水线（Jenkins）上装完本文件就能跑，不需要 unittest-xml-reporting 之类。
+#
+# 2. 浏览器不在 pip 里装
+#      本机 / Jenkins 节点 -> 安装 Chrome 即可（Selenium Manager 自动配驱动）
+#      容器                -> 见仓库根目录 Dockerfile（已装 chromium + 中文字体）
+#
+# 3. 可选依赖（默认不需要）
+#      仅当 config.ini -> [testcase] upload_mode = autoit 时才需要：
+#          pip install PyAutoIt
+#      ⚠️ 该方案靠模拟 Windows 原生「打开」对话框上传文件，
+#         在无头（CI 容器）环境下不可用，请保持默认的 send_keys 上传方式。
+#
+# PyAutoIt>=0.6.5

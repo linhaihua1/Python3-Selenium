@@ -1,0 +1,33 @@
+# 构建镜像时排除的内容（只影响镜像，不会删本地文件）
+# 目的：镜像里只留"跑测试必需的东西"，体积更小、构建更快，也避免把敏感信息带进镜像
+
+# 版本控制与编辑器
+.git
+.gitignore
+.idea
+.vscode
+*.iml
+
+# Python 缓存与本地虚拟环境（镜像内会重新装依赖）
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.Python
+
+# 运行产物：报告、日志、截图都由容器内运行产生，不需要打包进镜像
+Report/
+Logs/
+img/
+*.log
+geckodriver.log
+
+# 本地配置：含明文账号密码，绝对不能进镜像（容器里用环境变量注入）
+config.ini
+config.local.ini
+
+# 文档与流水线定义（运行时用不到）
+docs/
+Jenkinsfile
+Dockerfile
+.dockerignore

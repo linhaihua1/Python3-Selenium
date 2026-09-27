@@ -1,0 +1,157 @@
+# ==========================================================================
+#  配置模板（新人阅读顺序：第 0 个）
+# ==========================================================================
+#  【怎么用】
+#      cp config.ini.example config.ini      # Windows: copy config.ini.example config.ini
+#    然后按下面注释改成你自己的环境与账号。
+#
+#  【为什么要有这个模板】
+#     真实的 config.ini 含明文账号密码，已被 .gitignore 排除、不入库。
+#     仓库里只保留这份"占位值"模板，保证新人 clone 下来知道该填什么。
+#     流水线上则完全不需要 config.ini —— 账号密码由 Jenkins 凭据注入环境变量，
+#     地址由构建参数传入（见 docs/CI-CD接入指南.md）。
+#
+#  【环境变量覆盖规则（CI/CD 关键）】
+#     任意配置项都可以被同名环境变量覆盖：UI_ + 段名 + _ + 键名（全大写）
+#       [environment] url            ->  UI_ENVIRONMENT_URL
+#       [testcase]    login_password ->  UI_TESTCASE_LOGIN_PASSWORD
+#       [ci]          headless       ->  UI_CI_HEADLESS
+#     环境变量优先于本文件。要整体关闭该机制：UI_ENV_OVERRIDE=false
+#
+#  【格式说明】
+#     - 以 # 开头的是注释
+#     - 键名区分大小写（Common/configOverWriter.py 特意关掉了自动小写转换）
+#     - 值里可以放心出现 %，解析器已关闭 % 插值，不会报错
+# ==========================================================================
+
+
+# --------------------------------------------------------------------------
+# 被测环境：Common/basePage.open_browser() 会读这两项
+# --------------------------------------------------------------------------
+[environment]
+# 被测系统入口地址（统一门户登录页）
+# ⚠️ 建议指向测试环境；指向生产环境时跑全量用例会真实上传/报送数据
+url = http://测试环境地址/sso-portal/#/?redirect=/launch
+# 浏览器类型：chrome / firefox / edge
+# 无需手动下载 driver —— Selenium 4 自带的 Selenium Manager 会自动匹配
+browser = chrome
+
+
+# --------------------------------------------------------------------------
+# 用例参数：TestSuites/testLogin.py 的 setUpClass 会读这里
+# 把账号和文件路径放在配置里，是为了换环境/换账号时不用改代码
+# --------------------------------------------------------------------------
+[testcase]
+# 登录账号（流水线上由 Jenkins 凭据注入，不在这里填真实值）
+login_username = your_username
+login_password = your_password
+
+# 待上传的视频文件：写绝对路径，也支持 ~/video/demo.mp4 这种用户目录写法
+# 文件不存在时，"上传视频"用例会直接失败并提示路径（冒烟子集不涉及此用例）
+upload_file = D:\videos\demo.mp4
+
+# 上传实现方式：
+#   send_keys  默认。直接给页面里隐藏的 input[type=file] 赋值，不弹系统对话框，
+#              速度快、可在无桌面环境的 CI 上运行，推荐
+#   autoit     点上传按钮弹出 Windows「打开」对话框，用 autoit 模拟键盘输入。
+#              需要 pip install PyAutoIt，且系统对话框标题必须是「打开」（中文系统）
+# 说明：send_keys 失败时会自动回退到 autoit，通常不用手动改这一项
+upload_mode = send_keys
+
+# 上传表单的三个字段
+video_author = your_username
+phone = 13000000000
+reporting = 深圳
+
+# 关键字查询用例（test_5keyword）搜索的关键词
+# 对应环境变量：UI_TESTCASE_QUERY_KEYWORD
+query_keyword = 测试
+
+
+# --------------------------------------------------------------------------
+# 断言期望值：用例靠校验页面标题判定成功与否。
+# 不同系统的页面标题不同，集中放这里，改系统时只改配置、不改代码。
+# 对应环境变量：UI_ASSERT_TITLE_LOGIN 等（UI_ + 段 + 键，全大写）
+# --------------------------------------------------------------------------
+[assert]
+# 登录成功后统一门户首页的标题
+title_login = 统一门户
+# 进入生产系统（工作台）后的标题
+title_workbench = 工作台 - 云媒资系统
+# 进入素材库后的标题（上传/查询/报送用例也用它校验"页面未跳走"）
+title_material = 素材库 - 云媒资系统
+
+
+# --------------------------------------------------------------------------
+# 报告元信息：Common/runner.py 读取；命令行参数优先级高于这里
+# --------------------------------------------------------------------------
+[report]
+title = 融媒体生产系统webUI自动化测试报告
+filename = 融媒体生产系统webUI自动化测试报告.html
+tester = ui-auto
+description = UI自动化测试！！
+
+
+# --------------------------------------------------------------------------
+# CI/CD 流水线相关：Common/basePage.py、Common/runner.py 读取
+# 本机开发保持默认即可；Jenkins 上用环境变量覆盖
+# --------------------------------------------------------------------------
+[ci]
+# 是否无头运行（不开浏览器界面）
+#   false 本机开发用，能看见浏览器在操作，便于调试
+#   true  流水线必须开！Jenkins 节点没有桌面环境，有头模式起不来
+# 对应环境变量：UI_CI_HEADLESS
+headless = false
+
+# 元素定位默认超时（秒）。CI 机器通常比开发机慢，定位不稳时可调到 30
+# 对应环境变量：UI_CI_ELEMENT_TIMEOUT
+element_timeout = 15
+
+# 隐式等待（秒）。影响 find_element 的轮询时长
+# 对应环境变量：UI_CI_IMPLICIT_WAIT
+implicit_wait = 5
+
+# 冒烟用例：只跑这些用例（按用例方法名匹配，逗号分隔，支持部分匹配）
+# 选取原则：**不产生数据副作用**的前缀用例。
+# 当前 6 条用例是一条串行业务流，后 3 条会真实上传视频、提交报送单，
+# 所以冒烟只取前 3 条 —— 验证"登录链路 + 页面加载"是否正常。
+# 用法：python run.py --suite smoke
+smoke_cases = test_1login,test_2select_scxt,test_3material
+
+# JUnit XML 结果文件路径（相对工程根目录）
+# Jenkins 的 junit 插件靠它判定构建成功/失败，**不要删**
+# 对应环境变量：UI_CI_JUNIT_XML
+junit_xml = Report/junit-results.xml
+
+# 额外的 Chrome 启动参数（逗号分隔），一般留空
+# 对应环境变量：UI_CI_EXTRA_CHROME_ARGS
+extra_chrome_args =
+
+# Chrome 可执行文件的绝对路径。留空 = 用系统默认位置（Windows/macOS 本机不用填）。
+# 容器镜像（见仓库根 Dockerfile）里 chromium 装在 /usr/bin/chromium，需要显式指定
+# 对应环境变量：UI_CI_CHROME_BINARY
+chrome_binary =
+
+
+# --------------------------------------------------------------------------
+# 邮件发件人：Common/sentMail.py 读取（需要用 --mail 发报告时才配）
+# password 填 SMTP 授权码（去 QQ 邮箱「设置-账户」开启 SMTP 服务后生成），
+# 注意不是 QQ 登录密码！
+# smtp_host / smtp_port 不填时，默认按 QQ 邮箱（smtp.qq.com:465，SSL）处理；
+# 用其它邮箱（如 163 / 企业邮箱）时改成对应服务器与端口即可。
+# 对应环境变量：UI_SENDER_SMTP_HOST / UI_SENDER_SMTP_PORT
+# --------------------------------------------------------------------------
+[sender]
+username = 发件人
+email = 发件人邮箱
+password = SMTP授权码
+smtp_host = smtp.qq.com
+smtp_port = 465
+
+
+# --------------------------------------------------------------------------
+# 邮件收件人：键名随便写（只做标识），值是收件邮箱
+# 需要发给多个人，再加几行即可 —— sentMail 会遍历本段下所有键
+# --------------------------------------------------------------------------
+[addressed]
+收件人姓名 = 收件人邮箱
