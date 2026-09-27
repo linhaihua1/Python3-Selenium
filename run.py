@@ -104,10 +104,19 @@ def parse_args(argv=None):
                         help='浏览器类型，覆盖 config.ini [environment] browser')
     parser.add_argument('--url', help='被测地址，覆盖 config.ini [environment] url')
 
+    # ---- 多系统切换 ----
+    # 一套框架管理多个被测系统：在 config.ini 里为每个系统建一个 [system_名称] 段，
+    # 填 url / username / password / pattern 等，用 --system 名称 一键切换。
+    parser.add_argument('--system',
+                        help='切换被测系统：读 config.ini 的 [system_名称] 段，'
+                             '自动应用该系统的地址/账号/用例集。配合 --pattern 可再覆盖用例集')
+
     # ---- 结果输出 ----
     parser.add_argument('--junit',
                         help='JUnit XML 输出路径；传 none 可关闭（默认取 [ci] junit_xml）')
     parser.add_argument('--mail', action='store_true', help='运行结束后发送邮件')
+    parser.add_argument('--notify', action='store_true',
+                        help='运行结束后把结果推送到群机器人（钉钉/企业微信，配置见 [notify]）')
     return parser.parse_args(argv)
 
 
@@ -140,6 +149,45 @@ def apply_runtime_overrides(args):
     if applied:
         log1.info('命令行覆盖配置：%s' % ', '.join(applied))
     return applied
+
+
+def apply_system(system_name):
+    """按 --system 切换被测系统：把 [system_名称] 段翻译成环境变量覆盖。
+
+    支持的键（任一可选，缺了就不覆盖、沿用全局配置）：
+        url       -> UI_ENVIRONMENT_URL
+        browser   -> UI_ENVIRONMENT_BROWSER
+        username  -> UI_TESTCASE_LOGIN_USERNAME
+        password  -> UI_TESTCASE_LOGIN_PASSWORD
+        pattern   -> 返回给调用方，用于选定该系统的用例集
+        headless  -> UI_CI_HEADLESS
+
+    :return: 该系统配置的 pattern（字符串或 None），供 run() 选用例集
+    """
+    if not system_name:
+        return None
+    from Common.config import Config
+    section = 'system_%s' % system_name
+    if not Config.has_section(section):
+        raise SystemExit('未找到被测系统配置 [system_%s]，请在 config.ini 中添加该段' % system_name)
+
+    mapping = {
+        'url': 'UI_ENVIRONMENT_URL',
+        'browser': 'UI_ENVIRONMENT_BROWSER',
+        'username': 'UI_TESTCASE_LOGIN_USERNAME',
+        'password': 'UI_TESTCASE_LOGIN_PASSWORD',
+        'headless': 'UI_CI_HEADLESS',
+    }
+    applied = []
+    for key, env in mapping.items():
+        val = Config.get(section, key, '')
+        if val:
+            os.environ[env] = val
+            applied.append('%s=***' % key if key == 'password' else '%s=%s' % (key, val))
+    pattern = Config.get(section, 'pattern', '') or None
+    if applied:
+        log1.info('已切换到被测系统 [%s]，应用配置：%s' % (system_name, ', '.join(applied)))
+    return pattern
 
 
 def print_conclusion(summary):
@@ -176,14 +224,20 @@ if __name__ == '__main__':
     args = parse_args()
     log1.info('===== UI 自动化测试开始 =====')
 
-    # 命令行参数 -> 环境变量 -> config 覆盖
+    # 1) 先按 --system 切换被测系统（会把 [system_名称] 翻译成环境变量覆盖，
+    #    并可能给出该系统专属的用例 pattern）
+    system_pattern = apply_system(args.system)
+    # 用例集优先级：命令行 --pattern > 系统配置 pattern > 默认 test*.py
+    pattern = args.pattern if args.pattern != 'test*.py' else (system_pattern or args.pattern)
+
+    # 2) 命令行参数 -> 环境变量 -> config 覆盖（在 system 之后，保证命令行优先级最高）
     apply_runtime_overrides(args)
 
-    # runner.run() 返回汇总字典，例如：
+    # 3) 执行测试。runner.run() 返回汇总字典，例如：
     # {'report': '...报告.html', 'junit': '...junit-results.xml',
     #  'tests_run': 6, 'failures': 0, 'errors': 0, 'exit_code': 0, ...}
     summary = runner.run(
-        pattern=args.pattern,
+        pattern=pattern,
         title=args.title,
         report_name=args.filename,
         tester=args.tester,
@@ -196,7 +250,10 @@ if __name__ == '__main__':
 
     print_conclusion(summary)
 
+    # 4) 可选：把结果推送到群机器人（钉钉/企业微信）
+    if args.notify:
+        from Common.notifier import notify as _notify
+        _notify(summary)
+
     # 把退出码交给操作系统/Jenkins。
-    # 这是流水线能"自动判断构建成败"的关键一步 —— 少了它，
-    # 即使用例全挂，Jenkins 也会认为构建是成功的。
     sys.exit(summary['exit_code'])

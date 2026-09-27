@@ -56,6 +56,7 @@ from selenium import webdriver
 from selenium.common.exceptions import (
     NoSuchElementException,   # 元素找不到
     TimeoutException,         # 显式等待超时
+    StaleElementReferenceException,  # 元素过期（DOM 刷新后旧引用失效，偶发失败主因）
     WebDriverException,       # 所有 webdriver 异常的父类，兜底用
 )
 from selenium.webdriver.common.by import By          # Selenium 4 的定位方式常量
@@ -428,6 +429,52 @@ class BasePage:
         except WebDriverException:
             log1.error('常规点击失败，降级为JS点击', exc_info=1)
             self.js_click(element)
+
+    # ====================================================================== #
+    # 稳定性增强：自动重试 + 防元素过期（降低 CI 上的偶发失败 flaky）
+    #   Web 自动化最常见的偶发失败：元素还没渲染完、DOM 刚刷新导致引用过期、
+    #   点击被临时遮罩挡住。对这些"重试一次大概率就好"的瞬时错误，
+    #   框架层统一兜底重试，避免用例本身到处写 try/except。
+    # ====================================================================== #
+    # 默认对「瞬时错误」重试 2 次（共尝试 3 次）；可被配置 [ci] retry_times 覆盖
+    DEFAULT_RETRY = 2
+
+    def _retry_times(self):
+        """读取重试次数配置，缺省用 DEFAULT_RETRY。"""
+        return config.get_int('ci', 'retry_times', self.DEFAULT_RETRY)
+
+    def retry(self, func, *args, **kwargs):
+        """对瞬时错误自动重试执行 func，成功即返回，全部失败才抛出。
+
+        会被重试的异常：StaleElementReference（元素过期）、Timeout（等太久）、
+        以及其它 WebDriverException（点击被挡、元素未就绪等）。
+        AssertionError / ValueError 这类「业务断言或参数错误」不重试 ——
+        重试它们只会浪费时间，不会改变结果。
+
+        :param func: 要执行的函数（通常是 lambda: self.click(sel)）
+        :return: func 的返回值
+        """
+        times = self._retry_times()
+        last_exc = None
+        for attempt in range(times + 1):
+            try:
+                return func(*args, **kwargs)
+            except (StaleElementReferenceException, TimeoutException, WebDriverException) as e:
+                last_exc = e
+                if attempt < times:
+                    log1.warning('操作失败，第 %d/%d 次重试：%s' % (attempt + 1, times, e))
+                    self.my_sleep(1)   # 给页面一点喘息时间再重试
+                else:
+                    log1.error('重试 %d 次后仍失败：%s' % (times, e), exc_info=1)
+        raise last_exc
+
+    def safe_click(self, selector, timeout=None):
+        """带重试的点击：元素过期/被遮挡等瞬时错误会自动重试。【推荐用于易 flaky 的步骤】"""
+        return self.retry(lambda: self.click(selector, timeout))
+
+    def safe_type(self, selector, value, timeout=None):
+        """带重试的输入。"""
+        return self.retry(lambda: self.type(selector, value, timeout))
 
     def input_enter(self, txt, value, name='xpath', selector=None):
         """在输入框里输入内容后按回车（常用于搜索框）。【预留】

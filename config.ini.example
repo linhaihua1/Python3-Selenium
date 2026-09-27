@@ -142,6 +142,11 @@ implicit_wait = 5
 # 用法：python run.py --suite smoke
 smoke_cases = test_1login,test_2select_scxt,test_3material
 
+# 操作失败自动重试次数（应对元素过期/渲染慢/点击被挡等偶发失败，降低 flaky）。
+# BasePage.safe_click / safe_type 会用到；0 表示不重试。
+# 对应环境变量：UI_CI_RETRY_TIMES
+retry_times = 2
+
 # JUnit XML 结果文件路径（相对工程根目录）
 # Jenkins 的 junit 插件靠它判定构建成功/失败，**不要删**
 # 对应环境变量：UI_CI_JUNIT_XML
@@ -179,3 +184,35 @@ smtp_port = 465
 # --------------------------------------------------------------------------
 [addressed]
 收件人姓名 = 收件人邮箱
+
+
+# --------------------------------------------------------------------------
+# 群机器人通知（run.py --notify 时使用）：钉钉 / 企业微信 / 通用 webhook
+#   跑完把结果推送到群，不用打开 Jenkins 也能第一时间知道成败。
+#   对应环境变量：UI_NOTIFY_WEBHOOK / UI_NOTIFY_SECRET / UI_NOTIFY_TITLE
+# --------------------------------------------------------------------------
+[notify]
+# 机器人 webhook 地址（钉钉/企业微信机器人设置里复制）；不填则 --notify 不推送
+webhook =
+# 钉钉机器人若开启了「加签」安全设置，把密钥填这里；没开启加签则留空
+secret =
+# 推送消息的标题前缀
+title = UI 自动化测试
+
+
+# --------------------------------------------------------------------------
+# 多系统配置：一套框架管理多个被测系统。
+#   每个系统建一个 [system_名称] 段，用 python run.py --system 名称 一键切换。
+#   可用键：url / browser / username / password / headless / pattern(用例文件名匹配)
+#   没写的键沿用全局配置；密码同样可用环境变量 UI_TESTCASE_LOGIN_PASSWORD 覆盖。
+#   下面是两个示例，按需复制修改。
+# --------------------------------------------------------------------------
+# [system_erp]
+# url = http://erp测试环境地址/login
+# username = erp_tester
+# password = your_erp_password
+# pattern = testErp*.py
+#
+# [system_mall]
+# url = http://商城测试环境/
+# pattern = testMall*.py
