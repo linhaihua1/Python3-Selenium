@@ -651,3 +651,182 @@ class BasePage:
         alert = self.driver.switch_to.alert
         alert.accept()
         log1.info('已接受 alert 弹窗')
+
+    # ====================================================================== #
+    # 七、跨系统通用能力（让本框架能适配任意主流 Web 系统）
+    #   设计目标：党政 / 财务 / ERP / 商城 / 数据中台等系统虽然业务不同，
+    #   但底层 UI 模式高度相似 —— 都有"按文字点按钮/菜单、按占位符填输入框、
+    #   选下拉、等加载遮罩消失、按单元格定位表格行"。把这些通用模式沉淀在这里，
+    #   接入一个新系统时，页面对象直接调用即可，无需为每个系统重复造轮子。
+    #   全部方法与现有方法一样：找不到元素返回 None / 记日志，不随意抛异常。
+    # ====================================================================== #
+    def _xpath_norm(self, text):
+        """把文本里的单引号转义成 XPath 兼容写法（concat 拼接），避免引号破坏 xpath。"""
+        if "'" not in text:
+            return "'%s'" % text
+        # 含单引号时，用 concat 把每段包成双引号字符串再拼起来
+        parts = text.split("'")
+        return "concat(%s)" % ", \"'\", ".join("'%s'" % p for p in parts)
+
+    def get_element_by_text(self, text, tag='*', timeout=None, contains=False):
+        """按「可见文本」定位元素（最通用、最不依赖具体 DOM 结构的定位方式）。【通用】
+
+        几乎所有系统都能用它点按钮、菜单、tab、链接。优先于脆弱的绝对 xpath。
+        :param text:     要匹配的可见文本
+        :param tag:      限定标签，如 'button'/'a'/'span'，默认 '*' 不限
+        :param timeout:  等待秒数，默认取类属性 timeout
+        :param contains: True=文本包含即可（模糊），False=精确等于文本
+        :return: WebElement 或 None
+        """
+        timeout = timeout if timeout is not None else self.timeout
+        op = 'contains' if contains else 'normalize-space()='
+        if contains:
+            xp = "//%s[contains(normalize-space(.), %s)]" % (tag, self._xpath_norm(text))
+        else:
+            xp = "//%s[normalize-space(.)=%s]" % (tag, self._xpath_norm(text))
+        try:
+            el = WebDriverWait(self.driver, timeout).until(
+                EC.presence_of_element_located((By.XPATH, xp)))
+            log1.info('按文本定位成功：text=%s tag=%s' % (text, tag))
+            return el
+        except TimeoutException:
+            log1.error('按文本未找到元素：text=%s tag=%s' % (text, tag))
+            return None
+
+    def click_by_text(self, text, tag='*', timeout=None, contains=False):
+        """按可见文本点击元素（按钮/菜单/链接/tab）。【通用，推荐】
+
+        内部先尝试 WebElement.click()，失败自动降级为 JS 点击（与 click() 一致）。
+        """
+        el = self.get_element_by_text(text, tag=tag, timeout=timeout, contains=contains)
+        if el is None:
+            return False
+        try:
+            el.click()
+            log1.info('按文本点击成功：%s' % text)
+            return True
+        except WebDriverException:
+            try:
+                self.driver.execute_script('arguments[0].click();', el)
+                log1.info('按文本点击（JS 降级）成功：%s' % text)
+                return True
+            except WebDriverException:
+                log1.error('按文本点击失败：%s' % text, exc_info=1)
+                return False
+
+    def get_element_by_attr(self, attr, value, tag='*', timeout=None):
+        """按「属性=值」定位元素，最常用于按 placeholder 找输入框。【通用】
+
+        例如 get_element_by_attr('placeholder', '请输入用户名') 可跨系统复用，
+        因为 placeholder 文案通常稳定，比绝对 xpath 抗改版。
+        """
+        timeout = timeout if timeout is not None else self.timeout
+        xp = "//%s[@%s=%s]" % (tag, attr, self._xpath_norm(value))
+        try:
+            el = WebDriverWait(self.driver, timeout).until(
+                EC.presence_of_element_located((By.XPATH, xp)))
+            log1.info('按属性定位成功：@%s=%s' % (attr, value))
+            return el
+        except TimeoutException:
+            log1.error('按属性未找到元素：@%s=%s' % (attr, value))
+            return None
+
+    def type_by_placeholder(self, placeholder, value, clear=True, tag='input'):
+        """按 placeholder 定位输入框并输入（适用于绝大多数表单页）。【通用】
+
+        :param placeholder: 输入框占位提示文案
+        :param value:       要输入的文本
+        :param clear:       输入前是否清空（默认清空）
+        """
+        el = self.get_element_by_attr('placeholder', placeholder, tag=tag)
+        if el is None:
+            raise NoSuchElementException('未找到 placeholder=%s 的输入框' % placeholder)
+        if clear:
+            el.clear()
+        el.send_keys(value)
+        log1.info('按 placeholder 输入：%s -> %s' % (placeholder, value))
+
+    def select_option(self, selector, text=None, value=None, index=None):
+        """操作原生 <select> 下拉框，按可见文本/值/序号三选一。【通用】
+
+        注意：只适用于原生 select；若系统用 div 模拟下拉（很多后台如此），
+        请改用 click_by_text 先展开再点选项。
+        """
+        from selenium.webdriver.support.ui import Select
+        el = self.get_element(selector)
+        if el is None:
+            raise NoSuchElementException('未找到下拉框：%s' % (selector,))
+        sel = Select(el)
+        if text is not None:
+            sel.select_by_visible_text(text)
+            log1.info('下拉选择(文本)：%s' % text)
+        elif value is not None:
+            sel.select_by_value(value)
+            log1.info('下拉选择(值)：%s' % value)
+        elif index is not None:
+            sel.select_by_index(index)
+            log1.info('下拉选择(序号)：%s' % index)
+        else:
+            raise ValueError('select_option 必须传 text / value / index 之一')
+
+    def wait_loading_gone(self, selector=None, timeout=15, poll_frequency=0.3):
+        """等待「加载遮罩/转圈」消失后再继续。【通用】
+
+        几乎所有后台系统点查询/保存后都会出现 loading 遮罩，
+        不等待就去操作下一个元素极易偶发失败。
+        :param selector: 遮罩元素的定位描述；不传则用默认 xpath（含常见 loading 文案）
+        """
+        if selector is None:
+            # 常见 loading 特征：class 含 loading / 文本含"加载中"
+            selector = ['xpath', '//*[contains(@class,"loading") or contains(normalize-space(.),"加载中")]']
+        end_time = time.time() + timeout
+        while time.time() < end_time:
+            els = self.driver.find_elements(*selector) if isinstance(selector, (list, tuple)) \
+                else self.driver.find_elements(By.XPATH, selector if isinstance(selector, str) else selector[1])
+            if not els or not els[0].is_displayed():
+                log1.info('加载遮罩已消失')
+                return True
+            time.sleep(poll_frequency)
+        # 超时不抛异常（避免用例因网络慢整体崩），仅记日志，交给后续断言去判定
+        log1.error('等待加载遮罩消失超时(%ss)，继续执行后续步骤' % timeout)
+        return False
+
+    def get_table_rows(self, table_selector=None):
+        """获取页面上所有 <tr> 行元素（表格数据断言/按行操作的基础）。【通用】
+
+        :param table_selector: 限定某个表格的定位描述；不传则取全页所有 tr
+        """
+        if table_selector is None:
+            return self.driver.find_elements(By.XPATH, '//tr')
+        tbl = self.get_element(table_selector)
+        if tbl is None:
+            return []
+        return tbl.find_elements(By.XPATH, './/tr')
+
+    def find_row_by_cell_text(self, text, table_selector=None):
+        """在表格中查找「某个单元格包含指定文本」的那一行，返回 tr 元素。【通用】
+
+        数据中台/ERP/商城的列表页都靠它定位要操作的记录（点编辑/删除前先找到行）。
+        """
+        for tr in self.get_table_rows(table_selector):
+            if text in (tr.text or ''):
+                return tr
+        log1.error('表格中未找到含文本 %s 的行' % text)
+        return None
+
+    def hover(self, selector):
+        """鼠标悬停到元素上（触发下拉菜单、二级导航展开）。【通用】"""
+        from selenium.webdriver.common.action_chains import ActionChains
+        el = self.get_element(selector)
+        if el is None:
+            raise NoSuchElementException('未找到要悬停的元素：%s' % (selector,))
+        ActionChains(self.driver).move_to_element(el).perform()
+        log1.info('已悬停到元素：%s' % (selector,))
+
+    def scroll_to(self, selector):
+        """滚动到元素可见（列表很长时，目标元素在视口外点不到）。【通用】"""
+        el = self.get_element(selector)
+        if el is None:
+            raise NoSuchElementException('未找到要滚动到的元素：%s' % (selector,))
+        self.driver.execute_script('arguments[0].scrollIntoView({block:"center"});', el)
+        log1.info('已滚动到元素：%s' % (selector,))
