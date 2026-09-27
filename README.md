@@ -176,6 +176,8 @@ python run.py --browser firefox
 python run.py --title 冒烟测试 --filename smoke.html
 python run.py --junit none                         # 不生成 JUnit XML
 python run.py --mail                               # 跑完发邮件
+python run.py --notify                             # 跑完推送到钉钉/企业微信群
+python run.py --system erp                         # 切换到 config.ini 的 [system_erp] 系统
 
 # ---- 其他 ----
 python entrance.py                                 # 备用入口（党建云主题报告）
@@ -234,6 +236,10 @@ set UI_TESTCASE_LOGIN_PASSWORD=xxx                 # 覆盖密码（CI 上用凭
 | 凭据注入（密码不落仓库） | `UI_TESTCASE_LOGIN_*` 环境变量覆盖 |
 | 构建上下文写进报告 | `Common/ci.py` |
 | 流水线定义与容器镜像 | `Jenkinsfile` / `Dockerfile` |
+| 操作自动重试（降偶发失败） | `BasePage.retry/safe_click` / `[ci] retry_times` |
+| 数据驱动用例（CSV/JSON/Excel） | `Common/dataDriver.py` |
+| 多系统一键切换 | `--system` / `[system_名称]` 段 |
+| 群机器人结果通知 | `Common/notifier.py` / `--notify` |
 
 **5 步接入**：
 
