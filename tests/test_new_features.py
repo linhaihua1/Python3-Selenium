@@ -12,7 +12,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from tests.helpers import patch_config, patch_dirs, FakeDriver, FakeElement
+from tests.helpers import patch_config, FakeDriver
 from Common import dataDriver, notifier
 from Common.basePage import BasePage
 

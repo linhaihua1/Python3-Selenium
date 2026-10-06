@@ -120,7 +120,7 @@ class JUnitResult(_TestResult):
         except Exception:   # pragma: no cover - 缓冲区异常不应影响测试结果
             return ''
 
-    def _record(self, test, status, message='', detail=''):
+    def _record(self, test, status, message='', detail='', artifacts=None):
         classname, name = _case_meta(test)
         self.cases.append({
             'classname': classname,
@@ -130,7 +130,28 @@ class JUnitResult(_TestResult):
             'message': message,
             'detail': detail,
             'stdout': self._output(),
+            'artifacts': artifacts or {},
         })
+
+    def _capture(self, test, status):
+        """失败/出错时自动取证：截图 + 页面源码。【在用】
+
+        放在结果收集器里而不是用例里，是为了**兜底**：
+        只要用例失败就一定取证，不管用例自己有没有记得截图，
+        也不管失败发生在 setUp、断言还是框架内部。
+
+        ★ 本方法绝不向外抛异常 —— 取证失败不能反过来把测试结果搞乱。
+        """
+        try:
+            from Common.failureCapture import capture
+            info = capture(test.id(), tag=status)
+        except Exception:       # pragma: no cover - 取证自身的任何问题都不该影响结果
+            log1.error('失败取证过程异常（不影响测试结果）', exc_info=1)
+            return None
+        if info and info.get('error') and not (info.get('screenshot') or info.get('source')):
+            # 没有产出文件时把原因记下来，避免"以为有截图、其实没有"
+            log1.info('失败取证未产生文件：%s' % info['error'])
+        return info
 
     # ------------------------------------------------------------------ #
     # 四种结果：unittest 执行到对应分支时会回调这里
@@ -143,12 +164,17 @@ class JUnitResult(_TestResult):
         _TestResult.addFailure(self, test, err)
         # err 是 (异常类型, 异常对象, traceback)；拼成完整堆栈便于贴进缺陷单
         detail = ''.join(traceback.format_exception(*err))
-        self._record(test, 'failure', message=str(err[1]), detail=detail)
+        # 先取证再记录：取证要读"失败瞬间"的页面，晚一点页面可能已经变了
+        artifacts = self._capture(test, 'failure')
+        self._record(test, 'failure', message=str(err[1]), detail=detail,
+                     artifacts=artifacts)
 
     def addError(self, test, err):
         _TestResult.addError(self, test, err)
         detail = ''.join(traceback.format_exception(*err))
-        self._record(test, 'error', message=str(err[1]), detail=detail)
+        artifacts = self._capture(test, 'error')
+        self._record(test, 'error', message=str(err[1]), detail=detail,
+                     artifacts=artifacts)
 
     def addSkip(self, test, reason):
         # 基类没有重写 addSkip，直接用 unittest 标准实现记录到 self.skipped
@@ -257,10 +283,24 @@ def write_junit_xml(result, path, suite_name='UI Automation Test', properties=No
                 node.text = None
 
         # 该组用例的标准输出汇总（Jenkins 报告页可展开查看）
-        outputs = [i['stdout'] for i in items if i['stdout'].strip()]
-        if outputs:
+        # 失败用例额外附上"失败现场"的落盘路径，值班的人不用翻整个工作区找截图
+        blocks = []
+        for item in items:
+            text = item['stdout']
+            artifacts = item.get('artifacts') or {}
+            shot, source = artifacts.get('screenshot'), artifacts.get('source')
+            if shot or source:
+                lines = ['[失败现场] %s' % item['name']]
+                if shot:
+                    lines.append('  截图     : %s' % shot)
+                if source:
+                    lines.append('  页面源码 : %s' % source)
+                text = '%s\n%s' % (text, '\n'.join(lines)) if text else '\n'.join(lines)
+            if text.strip():
+                blocks.append(text)
+        if blocks:
             out_node = ET.SubElement(testsuite, 'system-out')
-            out_node.text = '\n'.join(outputs)
+            out_node.text = '\n'.join(blocks)
 
     # ---- 4. 落盘 ----
     # 目录不存在就创建，避免 Jenkins 首次执行因目录缺失而失败

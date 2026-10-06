@@ -20,9 +20,18 @@
 【执行一次测试的完整时序】
     1. build_suite()   扫描 TestSuites/，把所有 TestCase 装进 TestSuite
                         （跑冒烟时再按关键字过滤一遍）
+    1.5 三道安全闸门（企业级的关键，见 Common/env_guard.py / Common/testcase_meta.py
+        / Common/preflight.py）
+        a. 写入范围过滤：[testcase] mode = readonly 时，把写操作用例摘掉
+        b. 环境守卫  ：地址缺失 / 不在白名单 / 疑似生产且含写用例 -> 中止（exit 2）
+        ★ 顺序不能反：先过滤再守卫，这样"生产环境只跑只读用例"才是安全的
+        c. 环境自检  ：Python / selenium / 浏览器 / 驱动版本 / 目录可写
+                      有问题 -> 中止（exit 2）。放在最后一步，
+                      因为前三步都过了说明"该跑的用例已经确定"，再花 1 秒确认机器没问题
     2. 打开 Report/xxx.html 文件句柄
     3. HTMLTestRunner.run(suite) —— 触发每条用例的 setUpClass/用例/tearDownClass
-       注意：这里用的是自定义结果类 JUnitResult，所以**一次执行同时产出两种报告**
+       注意：这里用的是自定义结果类 JUnitResult，所以**一次执行同时产出两种报告**；
+       用例失败时会自动取证（截图 + 页面源码）到 Report/artifacts/日期/
     4. 关闭文件，HTML 报告落盘；再把结果写成 JUnit XML
     5. 打印失败摘要，返回汇总字典（含退出码）给调用方
 
@@ -53,11 +62,14 @@ import time
 import unittest
 
 from Common import ci as ci_env
+from Common import env_guard
+from Common import preflight
 from Common.config import Config
 from Common.dir_config import base_dir, ensure_dir, htmlreport_dir, testcases_dir
 from Common.HTMLTestReportCN import HTMLTestRunner
 from Common.junitReport import JUnitResult, write_junit_xml
 from Common.log import log1
+from Common.testcase_meta import is_readonly
 
 # 兜底默认值：config.ini 里没配 [report] 段时用。
 # 真实取值优先来自 config.ini [report]，可被命令行 --title/--filename 覆盖。
@@ -120,6 +132,42 @@ def filter_suite(suite, keywords):
     kept = [case for case in all_cases if any(k in case.id().lower() for k in lowered)]
     log1.info('用例过滤：关键字=%s，命中 %d/%d 条' % (keywords, len(kept), len(all_cases)))
     return unittest.TestSuite(kept)
+
+
+def classify_suite(suite):
+    """按作用域把用例分成「只读」与「写操作」两组。
+
+    :param suite: TestSuite（或任意可迭代的用例集合）
+    :return: (readonly_cases, write_cases)，两个列表，组内保持原有执行顺序
+
+    作用域来自用例上的标记（@readonly 装饰器或类属性 scope = 'readonly'），
+    规则与"为什么默认算写用例"见 Common/testcase_meta.py。
+
+    为什么要做这个分级：
+        企业里跑自动化最怕的是"本想打测试环境，结果在生产上真上传、真报送"。
+        把用例按"会不会写数据"分开之后，框架就能做到
+        「生产环境只放只读用例过去，写用例一律拦下」（见 Common/env_guard.py）。
+    """
+    readonly_cases, write_cases = [], []
+    for case in _iter_cases(suite):
+        (readonly_cases if is_readonly(case) else write_cases).append(case)
+    return readonly_cases, write_cases
+
+
+def describe_scopes(suite, limit=8):
+    """把用例的作用域汇总成一行可读文本，用于日志展示。【在用】
+
+    :param limit: 最多列出几条写用例名，避免日志被刷屏
+    :return: 例如 '只读 3 条 / 写操作 6 条（写：test_4uplaodbutton, test_6submitted ...）'
+    """
+    readonly_cases, write_cases = classify_suite(suite)
+    text = '只读 %d 条 / 写操作 %d 条' % (len(readonly_cases), len(write_cases))
+    if write_cases:
+        names = [case.id().split('.')[-1] for case in write_cases[:limit]]
+        if len(write_cases) > limit:
+            names.append('...')
+        text += '（写：%s）' % '、'.join(names)
+    return text
 
 
 def resolve_case_filter(suite_kind='full', cases=None):
@@ -231,12 +279,77 @@ def find_broken_modules(suite):
     return broken
 
 
-def build_suite(tests_dir=None, pattern='test*.py', cases=None):
+def _load_modules(module_paths, top_dir):
+    """按绝对路径列表加载用例，返回一个 TestSuite。【并行执行专用】
+
+    :param module_paths: 用例 .py 文件的绝对路径列表
+    :param top_dir:      工程根目录（用于把路径翻译成模块名；翻译失败时按文件直接加载兜底）
+    :return: unittest.TestSuite
+
+    为什么不直接用 discover：并行执行要把用例集按文件拆给多个进程，
+    每个进程只跑自己那几片。discover 只能按 pattern 匹配，做不到
+    "精确加载这几个文件"。
+    加载策略：优先按"路径转模块名"import（与 discover 一致，包内相对导入正常）；
+    转不出来（路径不在 top_dir 下）时退化为按文件路径直接加载。
+    """
+    import importlib
+    import importlib.util
+    loader = unittest.defaultTestLoader
+    suite = unittest.TestSuite()
+
+    for path in module_paths:
+        loaded = None
+        # 1) 优先：路径 -> 模块名（路径在工程根下时走这条，包内相对导入才正常）
+        try:
+            rel = os.path.relpath(path, top_dir)
+            if not rel.startswith('..'):
+                mod_name = os.path.splitext(rel)[0].replace(os.sep, '.').replace('/', '.')
+                importlib.import_module(mod_name)
+                loaded = loader.loadTestsFromName(mod_name)
+        except BaseException:
+            loaded = None
+
+        # 2) 兜底：按文件路径直接加载模块（不依赖它在哪个目录树下）
+        if loaded is None:
+            try:
+                mod_name = 'parallel_shard_mod_%d' % abs(hash(path))
+                spec = importlib.util.spec_from_file_location(mod_name, path)
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                loaded = loader.loadTestsFromModule(module)
+            except BaseException as exc:
+                loaded = _make_failed_test(path, exc)
+
+        suite.addTests(loaded if loaded is not None else _make_failed_test(path, None))
+    return suite
+
+
+def _make_failed_test(name, exc):
+    """造一个"导入失败"占位用例，供 find_broken_modules 检出。
+
+    不直接用 unittest 内部的 _FailedTest：它的构造签名在不同 Python 版本
+    不一致，且要求传入 exception。这里用一个最小 TestCase 子类承载异常信息。
+    """
+    msg = '导入失败：%s' % (exc or name)
+
+    class _FailedCase(unittest.TestCase):
+        def runTest(self):
+            raise ImportError(msg)
+
+    case = _FailedCase('runTest')
+    case._exception = exc or ImportError(msg)
+    return unittest.TestSuite([case])
+
+
+def build_suite(tests_dir=None, pattern='test*.py', cases=None, modules=None):
     """扫描用例目录，把用例收集成一个 TestSuite。
 
     :param tests_dir: 用例目录，默认 TestSuites/（见 Common/dir_config.py）
     :param pattern:   文件名匹配规则，默认 test*.py；只想跑某类用例可传 'test_Login*.py'
     :param cases:     用例关键字过滤（跑冒烟时用），为空表示全部
+    :param modules:   【并行执行专用】显式指定要加载的用例文件绝对路径列表。
+                      传了它就只加载这些文件（pattern 被忽略），用于把用例集
+                      拆分到多个进程各自执行一部分。
     :return: unittest.TestSuite 实例；此时用例还没执行，只是被"装进篮子"。
              收集失败时返回**空 suite**（由调用方按"未收集到用例"处理），不抛异常。
 
@@ -247,6 +360,18 @@ def build_suite(tests_dir=None, pattern='test*.py', cases=None):
         顺带把原因翻译成中文写进日志。
     """
     tests_dir = tests_dir or testcases_dir
+
+    # ---- 并行分支：按显式文件列表加载（不走 discover 的目录扫描）----
+    if modules:
+        log1.info('按指定文件加载用例（并行分片）：%s' % [os.path.basename(m) for m in modules])
+        suite = _load_modules(modules, base_dir)
+        if cases:
+            suite = filter_suite(suite, cases)
+        log1.info('加载测试用例完成，共 %d 个用例' % suite.countTestCases())
+        for case, exc in find_broken_modules(suite):
+            log1.error('用例模块导入失败：%s（原因：%s）' % (case.id(), exc or '未知'))
+        return suite
+
     log1.info('开始加载测试用例，目录：%s，pattern：%s' % (tests_dir, pattern))
 
     # ---- 前置体检：把"必然收集不到"的问题提前拦住，给出中文原因 ----
@@ -330,11 +455,13 @@ def print_failure_digest(result):
 
 def run(tests_dir=None, pattern='test*.py', title=None, report_name=None,
         tester=None, description=None, send_mail=False,
-        suite_kind='full', cases=None, junit=None):
+        suite_kind='full', cases=None, junit=None, modules=None):
     """执行测试并生成报告（HTML + JUnit XML）。
 
     :param tests_dir:    用例目录，默认 TestSuites/
     :param pattern:      用例文件匹配规则，默认 test*.py
+    :param modules:      【并行执行专用】显式指定的用例文件路径列表；
+                         传了它就只跑这些文件（见 build_suite 的同名参数）
     :param title:        报告标题，默认取 config.ini [report] title
     :param report_name:  报告文件名，默认取 config.ini [report] filename
     :param tester:       报告上显示的执行人，默认取 config.ini [report] tester
@@ -348,6 +475,12 @@ def run(tests_dir=None, pattern='test*.py', title=None, report_name=None,
              ★ 关键字段 exit_code：CI 用它判定构建成败，取值含义见本文件头部说明
 
     注意：参数优先级为「显式传参 > 环境变量 > config.ini > 代码里的 DEFAULT_* 常量」。
+
+    执行前的三道闸门（任一不过都直接返回 exit 2，**不会打开浏览器**）：
+        ① 写入范围过滤：[testcase] mode = readonly 时只跑标记为只读的用例
+        ② 环境守卫    ：地址缺失 / 不在白名单 / 疑似生产且含写用例 -> 中止
+        ③ 运行环境自检：Python / selenium / 浏览器 / 驱动版本 / 目录可写
+        被拦下时返回的 summary['reason'] 里有人话说明，可直接打到日志或告警里。
     """
     run_start = time.time()
 
@@ -379,7 +512,7 @@ def run(tests_dir=None, pattern='test*.py', title=None, report_name=None,
                    '为避免误跑全量用例产生真实数据，已中止执行')
         return _summary(exit_code=EXIT_ENV_ERROR, duration=time.time() - run_start)
 
-    suite = build_suite(tests_dir, pattern, case_filter)
+    suite = build_suite(tests_dir, pattern, case_filter, modules=modules)
     total = suite.countTestCases()
     if total == 0:
         # 收集为 0 是 CI 上最常见的"看起来是框架坏了"的问题，这里一次给出可自解释的结论：
@@ -406,6 +539,76 @@ def run(tests_dir=None, pattern='test*.py', title=None, report_name=None,
         log1.error('收集到的 %d 条"用例"全部是模块导入失败的占位对象，'
                    '未取得任何真实用例，按环境异常处理' % total)
         return _summary(exit_code=EXIT_ENV_ERROR, tests_run=0, duration=time.time() - run_start)
+
+    # ---- 2.5 用例作用域分级：区分「只读」与「会写数据」的用例 ----
+    log1.info('用例作用域：%s' % describe_scopes(suite))
+
+    # 写入范围过滤：config.ini -> [testcase] mode
+    #   all      = 不限（默认，本机调试用）
+    #   readonly = 只跑只读用例（CI 默认姿态，保证不产生业务数据）
+    mode = (Config.get('testcase', 'mode', 'all') or 'all').strip().lower()
+    if mode == 'readonly':
+        readonly_cases, skipped_write = classify_suite(suite)
+        if skipped_write:
+            # 明确写清"被跳过的写用例"，避免看日志的人以为是"用例没跑"或"用例没了"
+            log1.warning('[testcase] mode = readonly，本次跳过 %d 条写操作用例：%s'
+                         % (len(skipped_write),
+                            '、'.join(case.id() for case in skipped_write)))
+        suite = unittest.TestSuite(readonly_cases)
+        total = suite.countTestCases()
+        if total == 0:
+            log1.error('mode = readonly 过滤后没有剩余可执行用例。'
+                       '请确认用例已标记为只读：类属性 scope = "readonly"，'
+                       '或方法上加 @readonly（见 Common/testcase_meta.py）')
+            return _summary(exit_code=EXIT_ENV_ERROR, tests_run=0,
+                            reason='readonly 模式下无可用用例',
+                            duration=time.time() - run_start)
+
+    # ---- 2.6 环境守卫：拦住"本该打测试环境、结果打了生产"的事故 ----
+    # 放在过滤之后而不是更早：要等过滤完成，才知道"这次实际要跑的用例里有没有写操作"。
+    # 好处是 mode=readonly 时，即使在生产环境也能安全地只跑只读用例。
+    remaining_write = classify_suite(suite)[1]
+    if str(suite_kind).lower() == 'smoke' and remaining_write:
+        # 冒烟集的定位是"每次提交都跑、绝对不能有副作用"，混进写用例属于配置错误
+        log1.warning('冒烟集里包含 %d 条写操作用例（冒烟应无副作用）：%s'
+                     % (len(remaining_write),
+                        '、'.join(case.id().split('.')[-1] for case in remaining_write)))
+
+    verdict = env_guard.check(
+        url=Config.get('environment', 'url', ''),
+        allow_write=Config.get_bool('safety', 'allow_write', False),
+        url_must_match=Config.get('safety', 'url_must_match', ''),
+        url_blocklist=Config.get_list('safety', 'url_blocklist',
+                                      env_guard.DEFAULT_BLOCKLIST),
+        has_write_cases=bool(remaining_write),
+        guard=Config.get_bool('safety', 'guard', True),
+    )
+    if not verdict:
+        log1.error('环境守卫拦截，已中止执行（退出码 2）：%s' % verdict.reason)
+        return _summary(exit_code=EXIT_ENV_ERROR, tests_run=0,
+                        reason=verdict.reason,
+                        duration=time.time() - run_start)
+    log1.info('环境守卫通过（%s），即将执行 %d 条用例' % (verdict.code, total))
+
+    # ---- 2.7 运行环境自检：把"机器/浏览器/驱动"的问题挡在开浏览器之前 ----
+    # 为什么要单独一步：这类问题的现象是"卡很久然后抛一屏堆栈"，
+    # 真正的原因（例如 PATH 上有个版本不匹配的 chromedriver）藏在最后一行，
+    # 几乎没人第一次就能看出来。提前 1 秒说清，比事后排查 1 小时划算。
+    # 可用 [ci] preflight = false 关闭（单元测试就是这么做的，见 tests/helpers.py）。
+    if Config.get_bool('ci', 'preflight', True):
+        findings = preflight.collect(
+            browser=Config.get('environment', 'browser', 'chrome'),
+            browser_binary=Config.get('ci', 'chrome_binary', ''),
+        )
+        preflight.log_findings(findings)
+        if preflight.has_error(findings):
+            print(preflight.format_report(findings, only_problems=True))
+            reason = '；'.join('%s：%s' % (item.name, item.detail)
+                              for item in findings if item.level == preflight.LEVEL_ERROR)
+            log1.error('运行环境自检未通过，已中止执行（退出码 2）：%s' % reason)
+            return _summary(exit_code=EXIT_ENV_ERROR, tests_run=0,
+                            reason=reason,
+                            duration=time.time() - run_start)
 
     # ---- 3. 准备报告文件（目录不存在会自动创建）----
     report_path = os.path.join(ensure_dir(htmlreport_dir), report_name)
@@ -497,7 +700,10 @@ def _summary(**kwargs):
     """把返回字段补全成固定结构，避免调用方到处写 .get()。
 
     固定字段：exit_code / tests_run / failures / errors / skipped /
-             report / junit / duration / cases / success
+             report / junit / duration / cases / reason / success
+
+    reason 字段：被中止时（exit_code=2）记录"为什么没跑"，例如
+    "环境守卫拦截：疑似生产环境且包含写操作用例"。正常情况下为 None。
     """
     summary = {
         'exit_code': EXIT_OK,
@@ -509,6 +715,7 @@ def _summary(**kwargs):
         'junit': None,
         'duration': 0.0,
         'cases': [],
+        'reason': None,
     }
     summary.update(kwargs)
     summary['success'] = summary['exit_code'] == EXIT_OK

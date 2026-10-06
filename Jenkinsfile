@@ -28,11 +28,19 @@
 //    2. JUnit XML：Report/junit-results.xml，junit 步骤解析它生成用例明细与趋势图
 //    3. 环境变量覆盖：UI_ 开头的变量会覆盖 config.ini，
 //       所以仓库里不必存生产账号密码（见 Common/config.py 的说明）
+//    4. 定位规范门禁：Common/locator_policy.py 会扫描 elementPage.py，
+//       脆弱定位（绝对路径 xpath、深层下标）超过阈值时退出码 1 -> stage 变红。
+//       阈值写在下面 stage 里，改进后请同步调低。
 //
 //  【新人注意】
 //    - 本流水线默认跑 **smoke（冒烟）** 子集：只覆盖"登录 -> 进系统 -> 进素材库"，
 //      不产生任何数据副作用，可以在每次构建后放心执行。
 //      full（全量）会真实上传视频、报送素材，请只在测试环境或明确需要时选择。
+//    - ★ 安全闸门：run.py 在开浏览器之前会做两道检查，
+//      「只读/写」用例分级 + 环境守卫（[safety] 段）。
+//      如果把 TARGET_URL 指向了带生产特征（prod/线上/正式）的地址，
+//      且本次要跑写用例，流水线会 **以退出码 2 主动中止**，而不是照跑。
+//      这是刻意的：宁可少跑一次，也不要往生产库真发一条素材。
 //    - disableConcurrentBuilds 是刻意加上的：UI 用例会操作同一套环境数据，
 //      两个构建同时跑必然互相干扰。
 // ==========================================================================
@@ -64,8 +72,11 @@ pipeline {
         choice(name: 'TEST_SUITE', choices: ['smoke', 'full'],
                description: 'smoke=冒烟(登录链路，不写数据，默认)；full=全量(含上传/报送，会写真实数据)')
 
+        choice(name: 'TEST_ENV', choices: ['default', 'test', 'prod'],
+               description: '环境档位。default=用 config.ini 的 [environment]；test/prod=用 [env_test]/[env_prod] 段覆盖。选 prod 时安全闸门会拦下写用例')
+
         string(name: 'TARGET_URL', defaultValue: '',
-               description: '被测地址。留空则用仓库 config.ini 的 [environment] url；建议由上游构建任务传入')
+               description: '被测地址。留空则用仓库 config.ini 对应环境档位的 url；建议由上游构建任务传入')
 
         string(name: 'APP_BUILD_NO', defaultValue: '',
                description: '被测应用自身的构建号/版本，会写进报告与 JUnit 结果，便于追溯"这份结果对应哪个版本"')
@@ -116,6 +127,8 @@ pipeline {
         // ------------------------------------------------------------------
         // ② 准备运行环境：独立虚拟环境 + 安装依赖
         //    用 .venv 而不是节点的全局 Python，避免多个任务互相污染依赖版本
+        //    requirements-dev.txt 只提供 flake8（代码规范门禁），装不上不算致命，
+        //    所以用了 || true，避免因为内网源缺包把整条流水线卡死在第一步。
         // ------------------------------------------------------------------
         stage('准备运行环境') {
             steps {
@@ -127,6 +140,7 @@ pipeline {
                             python3 -m venv .venv
                             .venv/bin/python -m pip install --upgrade pip
                             .venv/bin/python -m pip install -r requirements.txt
+                            .venv/bin/python -m pip install -r requirements-dev.txt || true
                         '''
                     } else {
                         env.PYTHON_BIN = "${env.WORKSPACE}\\.venv\\Scripts\\python.exe"
@@ -134,6 +148,7 @@ pipeline {
                             python -m venv .venv
                             .venv\\Scripts\\python.exe -m pip install --upgrade pip
                             .venv\\Scripts\\python.exe -m pip install -r requirements.txt
+                            .venv\\Scripts\\python.exe -m pip install -r requirements-dev.txt
                         '''
                     }
                     echo "Python 解释器：${env.PYTHON_BIN}"
@@ -142,7 +157,60 @@ pipeline {
         }
 
         // ------------------------------------------------------------------
-        // ③ 框架单元测试（质量门禁）
+        // ③ 代码规范门禁（flake8）
+        //    纯静态检查，1 秒内出结果，比任何测试都便宜 —— 放在最前面当第一道门。
+        //    它的价值不在"抓出错字"，而在让「注释乱、行宽乱、import 成堆没用」
+        //    这类问题在合入前就暴露，代码不会随着时间烂掉。
+        //    规则见工程根 .flake8；flake8 缺失时跳过，不阻塞测试。
+        // ------------------------------------------------------------------
+        stage('代码规范检查') {
+            steps {
+                script {
+                    def cmd = "\"${env.PYTHON_BIN}\" -m flake8"
+                    echo "规范检查命令：${cmd}"
+                    if (isUnix()) {
+                        // flake8 没装上（例如内网源不可用）时不要挡住建言流程
+                        sh "if \"${env.PYTHON_BIN}\" -m flake8 --version >/dev/null 2>&1; then ${cmd}; else echo '未安装 flake8，跳过代码规范检查'; fi"
+                    } else {
+                        bat """
+                            "%PYTHON_BIN%" -m flake8 --version >nul 2>&1
+                            if errorlevel 1 (
+                                echo 未安装 flake8，跳过代码规范检查
+                            ) else (
+                                ${cmd}
+                            )
+                        """
+                    }
+                }
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // ④ 元素定位规范门禁
+        //    元素表是 UI 自动化的命门：一条 /html/body/div[5]/... 的绝对路径，
+        //    前端挪一个 div 就全线报错，而且报的是"找不到元素"，
+        //    排查时很难想到是定位写法的问题。
+        //    这里直接把"脆弱定位数量"冻结成阈值：只能降，不能升。
+        // ------------------------------------------------------------------
+        stage('定位规范检查') {
+            steps {
+                script {
+                    // ★ 阈值 = 当前实测值。改好一条定位就往下调一格。
+                    //   改完定位后先跑：python -m Common.locator_policy --issues
+                    def maxFlawedLocators = 13
+                    def cmd = "\"${env.PYTHON_BIN}\" -m Common.locator_policy --fail-over ${maxFlawedLocators}"
+                    echo "定位检查命令：${cmd}"
+                    if (isUnix()) {
+                        sh cmd
+                    } else {
+                        bat cmd
+                    }
+                }
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // ⑤ 框架单元测试（质量门禁）
         //    几十秒、不开浏览器、零业务副作用。
         //    先证明"框架自身是好的"，再花几分钟跑 UI 用例 ——
         //    UI 用例失败时最容易纠结"是框架坏了还是页面改版了"，
@@ -166,13 +234,15 @@ pipeline {
         }
 
         // ------------------------------------------------------------------
-        // ④ 执行 UI 测试（构建后的冒烟测试就在这一步）
+        // ⑥ 执行 UI 测试（构建后的冒烟测试就在这一步）
         //    sh/bat 返回非 0 会让本 stage 变红 —— 这正是我们要的"自动判定失败"
         // ------------------------------------------------------------------
         stage('执行冒烟测试') {
             steps {
                 script {
                     def urlArg    = params.TARGET_URL?.trim()   ? "--url ${params.TARGET_URL.trim()}" : ''
+                    // default 表示沿用 config.ini 的 [environment]，不必传 --env
+                    def envArg    = (params.TEST_ENV && params.TEST_ENV != 'default') ? "--env ${params.TEST_ENV}" : ''
                     // tester 用 ASCII，避免 Windows cmd 下中文参数编码问题
                     def testerArg = params.APP_BUILD_NO?.trim() ? "--tester app-build-${params.APP_BUILD_NO.trim()}" : ''
                     def mailArg   = params.SEND_MAIL ? '--mail' : ''
@@ -182,7 +252,7 @@ pipeline {
                         "--suite ${params.TEST_SUITE}",
                         '--headless',
                         '--junit Report/junit-results.xml',
-                        urlArg, testerArg, mailArg
+                        envArg, urlArg, testerArg, mailArg
                     ].findAll { it != null && it.trim() != '' }.join(' ')
 
                     // 不上 --title/--filename，保持 config.ini 里配置的中文报告名，
@@ -234,6 +304,7 @@ pipeline {
                       keepLongStdio: true
 
                 // 2) 归档产物：报告、日志、失败截图都存进构建，方便事后回溯
+                //    Report/** 已经覆盖 Report/artifacts/（失败自动取证的截图与页面源码）
                 archiveArtifacts artifacts: 'Report/**', allowEmptyArchive: true, fingerprint: true
                 archiveArtifacts artifacts: 'Logs/**',    allowEmptyArchive: true
                 archiveArtifacts artifacts: 'img/**',     allowEmptyArchive: true
@@ -270,13 +341,17 @@ pipeline {
 构建号  : ${env.BUILD_NUMBER}
 被测版本: ${params.APP_BUILD_NO ?: '-'}
 测试集  : ${params.TEST_SUITE}
+环境档位: ${params.TEST_ENV ?: 'default'}
 地址    : ${params.TARGET_URL ?: '（取仓库配置）'}
 构建页面: ${env.BUILD_URL}
 
 排查顺序：
+  0. 退出码是 2 的话先别急着看用例 —— 多半是环境守卫拦下来的
+     （地址指向生产 或 配置缺失），日志里会写明具体原因
   1. 构建页面的「测试结果」看挂了哪条用例
-  2. 归档的 Report/*.html 报告与 img/ 下的失败截图
-  3. Logs/日期/Error_Logs/ 里的错误堆栈
+  2. Report/artifacts/日期/ 下的失败现场：截图 + 当时的页面 HTML
+  3. 归档的 Report/*.html 报告与 img/ 下的失败截图
+  4. Logs/日期/Error_Logs/ 里的错误堆栈
 """
                 } else {
                     echo '未配置 NOTIFY_MAIL，跳过失败通知'

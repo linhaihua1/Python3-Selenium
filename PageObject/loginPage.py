@@ -135,6 +135,51 @@ class LoginPage(BasePage):
     # ====================================================================== #
     # 四、关键字查询
     # ====================================================================== #
+    def query_form_ready(self):
+        """自检：素材库查询区的关键控件是否都已渲染出来，返回检查结果。
+
+        :return: dict，形如 {'关键字输入框': True, '查询按钮': True, '重置按钮': False}
+
+        为什么要有这个方法：素材库是异步渲染的单页应用，刚进页面时表单可能还没出来，
+        直接操作会偶发失败。先做一次"控件是否齐全"的自检，
+        失败时能直接指出**少了哪一个**，而不是只报一句 xpath 定位失败。
+
+        本方法**只读**：不点任何按钮、不发请求，因此可以安全地在生产环境执行。
+        """
+        checks = {
+            '关键字输入框': Element1.keyword,
+            '查询按钮': Element1.querybutton,
+            '重置按钮': Element1.replacement,
+        }
+        result = {}
+        for name, selector in checks.items():
+            # timeout=0 表示立即判定，不等待：此时页面已经加载完，等下去没意义
+            result[name] = self.get_element(selector, timeout=0) is not None
+            log1.info('查询区控件[%s] 存在=%s' % (name, result[name]))
+        return result
+
+    def fill_keyword(self, keyword):
+        """只往关键字输入框里填内容，**不点查询**（只读操作，不产生数据影响）。
+
+        :param keyword: 要填入的关键词
+
+        与 keyword_query() 的区别：那个会点「查 询」真正发起搜索、
+        再点「重 置」恢复；本方法只负责填值，用于校验"输入是否生效"。
+        """
+        self.type(Element1.keyword, keyword)
+
+    def read_keyword(self):
+        """读取关键字输入框当前的值（校验输入是否生效、重置是否清空）。"""
+        return self.get_value(Element1.keyword)
+
+    def reset_query(self):
+        """点「重 置」清空查询条件，把列表恢复到初始状态。
+
+        单独抽出来的原因：重置是"把页面还回去"的动作，
+        用例做只读校验后必须调用它，避免影响后续用例。
+        """
+        self.click(Element1.replacement)
+
     def keyword_query(self, keyword):
         """按关键字搜索素材，搜索后点「重 置」清空查询条件。
 

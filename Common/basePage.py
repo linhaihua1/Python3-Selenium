@@ -66,6 +66,7 @@ from selenium.webdriver.support.ui import WebDriverWait            # 显式等�
 
 import getcwd                       # 取工程根目录
 from Common.config import Config    # 读 config.ini
+from Common import driverRegistry as driver_registry   # 浏览器实例登记（失败取证要用）
 from Common.log import log1         # 统一日志
 
 # ---------------------------------------------------------------------------
@@ -217,6 +218,10 @@ class BasePage:
             implicit_wait = config.get_int('ci', 'implicit_wait', 5)
             self.driver.implicitly_wait(implicit_wait)
             log1.info('设置隐式等待%d秒' % implicit_wait)
+
+            # 登记到全局表：用例失败时框架要靠它拿到浏览器做自动取证
+            # （见 Common/driverRegistry.py 与 Common/failureCapture.py）
+            driver_registry.register(self.driver)
             return self.driver
         except WebDriverException:
             log1.error('浏览器打开报错', exc_info=1)
@@ -255,6 +260,9 @@ class BasePage:
         except WebDriverException:
             log1.error('关闭浏览器报错', exc_info=1)
         finally:
+            # 注销登记：否则失败取证会去操作一个已关闭的浏览器，
+            # 抛出的 InvalidSessionIdException 会把真正的失败原因盖掉
+            driver_registry.unregister(self.driver)
             # 无论是否报错都把引用清空，避免后续误用到已失效的 driver
             self.driver = None
 
@@ -487,7 +495,6 @@ class BasePage:
         if selector is not None:
             element = self.get_element(selector)
         else:
-            by = BY_MAP.get(str(name).lower(), By.XPATH)
             element = self.get_element([str(name).lower(), value])
         if element is None:
             raise NoSuchElementException('输入框不存在，无法输入：%s=%s' % (name, value))
@@ -526,6 +533,25 @@ class BasePage:
         text = element.text
         log1.info('获取的text：%s' % text)
         return text
+
+    def get_value(self, selector, timeout=None):
+        """获取表单控件当前的 value（输入框里用户看到的那串字）。【通用】
+
+        与 get_text() 的区别（新手最容易搞混的一对）：
+            get_text()  读元素中间**显示的文字** —— 用在按钮、标题、表格单元格
+            get_value() 读控件的 **value 属性** —— 用在 input / textarea / select
+
+        为什么需要它：只"输入成功没报错"不等于"值真的填进去了"，
+        校验"输入是否生效""重置后是否真的清空"必须读到值才算验证过。
+
+        :return: value 字符串；元素没有 value 属性时返回 None
+        """
+        element = self.get_element(selector, timeout if timeout is not None else self.timeout)
+        if element is None:
+            raise NoSuchElementException('元素不存在，无法获取它的值：%s' % (selector,))
+        value = element.get_attribute('value')
+        log1.info('获取的value：%s' % value)
+        return value
 
     def use_js(self, js):
         """执行任意 JS 脚本。【预留】
@@ -726,7 +752,6 @@ class BasePage:
         :return: WebElement 或 None
         """
         timeout = timeout if timeout is not None else self.timeout
-        op = 'contains' if contains else 'normalize-space()='
         if contains:
             xp = "//%s[contains(normalize-space(.), %s)]" % (tag, self._xpath_norm(text))
         else:

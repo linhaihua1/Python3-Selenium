@@ -16,7 +16,6 @@ import os
 import tempfile
 import unittest
 
-import Common.log as log_module
 from Common.log import _log_root, get_log, log1, _INITIALIZED
 from tests.helpers import patch_dirs
 

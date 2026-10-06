@@ -21,7 +21,6 @@ import unittest
 from unittest import mock
 
 from tests.helpers import patch_config
-from Common.basePage import BasePage
 from TestSuites import testLogin as login_suite
 from TestSuites.testLogin import TestLogin
 

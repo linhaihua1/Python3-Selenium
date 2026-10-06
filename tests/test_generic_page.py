@@ -144,5 +144,49 @@ class TestGenericLogin(_PageEnv):
         self.assertIn('123456', el.sent)
 
 
+# ==========================================================================
+# 二、配置了「成功标识」时的等待分支
+#   这是接入新系统时最常用的配置（[system] success_text），
+#   但之前一直没有测试覆盖，导致里面一个拼写错误潜伏了很久。
+# ==========================================================================
+class TestGenericLoginSuccessText(unittest.TestCase):
+    """success_text 非空 -> 走「等成功标识出现」而不是「等加载遮罩消失」。"""
+
+    INI = """\
+[ci]
+element_timeout = 9
+
+[system]
+username_placeholder = 请输入用户名
+password_placeholder = 请输入密码
+login_button_text = 登录
+success_text = 退 出
+"""
+
+    def test_配置了成功标识时按其等待且不报错(self):
+        """★ 回归保护：本分支曾把 Config.get_int 误写成 Config.getint，
+        执行到这一行直接抛 AttributeError，而用例只在这条配置非空时才走到。
+
+        修法已落到 PageObject/genericPage.py；本用例负责不让它再溜回来。
+        """
+        el = FakeElement()
+        driver = FakeDriver(element=el)
+        with patch_config(ini_text=self.INI):
+            gp = GenericPage(driver=driver, timeout=1)
+            with mock.patch.object(BasePage, 'my_sleep', return_value=None):
+                gp.login('admin', '123456')      # 不抛异常即通过
+        self.assertIn('admin', el.sent)
+
+    def test_Config的整数读取方法名是get_int(self):
+        """明确钉住方法名：Config 没有 getint()，写错了只在该分支才炸。"""
+        from Common.config import Config
+
+        self.assertTrue(hasattr(Config, 'get_int'), '整数读取方法应为 get_int')
+        self.assertFalse(
+            hasattr(Config, 'getint'),
+            'Config.getint 不存在；请用 get_int（若要保留别名需显式添加）',
+        )
+
+
 if __name__ == '__main__':
     unittest.main()

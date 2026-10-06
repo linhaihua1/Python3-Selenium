@@ -38,6 +38,61 @@ browser = chrome
 
 
 # --------------------------------------------------------------------------
+# 【安全守卫】防止误连生产环境 —— 本工程优先级最高的一组配置
+#   实现见 Common/env_guard.py，在执行用例之前检查，不通过就中止（退出码 2）。
+#   它拦的是自动化最贵的一类事故：本想打测试环境，结果在生产上真上传、真报送。
+#   对应环境变量：UI_SAFETY_GUARD / UI_SAFETY_URL_MUST_MATCH 等
+# --------------------------------------------------------------------------
+[safety]
+# 总开关。false 会跳过下面所有检查（不推荐，除非你非常清楚在做什么）
+guard = true
+
+# 地址白名单（正则）。填了就必须匹配，否则中止。留空则不校验。
+# 这是最有效的一道防线：只要写对一条正则，就再也不可能打到别的环境去。
+# 例（只允许本工程的测试环境）：
+#     url_must_match = ^http://test\.example\.com/
+# 注意：正则里的点号和斜杠要转义，写不对会直接报"不是合法正则"并中止
+url_must_match =
+
+# 地址里出现任一关键字，即视为"疑似生产环境"（逗号或换行分隔）。
+# 命中后会做两件事：只读用例放行并告警；含写用例则直接拦截。
+# 留空则使用内置默认值：prod / production / 线上 / 正式 / 生产
+url_blocklist =
+
+# 是否允许在生产特征的环境下执行**写操作用例**（上传/报送/保存）。
+#   false（默认，安全）—— 生产环境只跑只读用例，写用例一律拦下
+#   true             —— 明确知道后果并接受，才会设成 true
+# 对应环境变量：UI_SAFETY_ALLOW_WRITE
+allow_write = false
+
+
+# --------------------------------------------------------------------------
+# 【多环境】一套代码在 dev / test / prod 之间切换
+#   用法：python run.py --env test
+#   原理：把 [env_名称] 段里的键翻译成环境变量覆盖，再走统一优先级链路
+#        （环境变量 > config.ini > 代码默认值）。
+#   段里**只写需要覆盖的项**，没写的沿用全局配置。
+#   可写键：url / browser / headless / mode / allow_write / pattern
+#     mode = readonly  该环境只跑只读用例（CI 上的推荐姿态）
+#     mode = all       不限（本机调试用）
+#   对应环境变量：UI_ENVIRONMENT_URL / UI_TESTCASE_MODE 等
+# --------------------------------------------------------------------------
+[env_test]
+# 测试环境：无头跑 + 只跑只读用例，适合每次提交都跑一遍
+# （地址请改成你们真实的测试环境地址；占位地址会被环境守卫拦下）
+url = http://测试环境地址/sso-portal/#/?redirect=/launch
+headless = true
+mode = readonly
+
+# 生产环境的配置档。默认注释掉 —— 需要时再取消注释，避免"手滑 --env prod"。
+# 生产环境**必须**保持 mode = readonly，写用例永远不要在生产跑。
+# [env_prod]
+# url = http://生产环境地址/sso-portal/#/?redirect=/launch
+# headless = true
+# mode = readonly
+
+
+# --------------------------------------------------------------------------
 # 用例参数：TestSuites/testLogin.py 的 setUpClass 会读这里
 # 把账号和文件路径放在配置里，是为了换环境/换账号时不用改代码
 # --------------------------------------------------------------------------
@@ -66,6 +121,16 @@ reporting = 深圳
 # 关键字查询用例（test_5keyword）搜索的关键词
 # 对应环境变量：UI_TESTCASE_QUERY_KEYWORD
 query_keyword = 测试
+
+# 写入范围：控制本次允许跑哪些用例。
+#   all      不限（默认，本机调试用）
+#   readonly 只跑只读用例，写操作（上传/报送/保存）会被自动跳过
+# 判断依据是用例上的作用域标记，见 Common/testcase_meta.py：
+#   类属性 scope = 'readonly'  或  方法上加 @readonly
+# 未被标记的用例一律算写用例（刻意的失败安全设计：忘了标最多跑不了，
+# 反过来若默认只读，忘了标的写用例就会直接放到生产上跑）。
+# 对应环境变量：UI_TESTCASE_MODE
+mode = all
 
 
 # --------------------------------------------------------------------------
@@ -151,6 +216,17 @@ retry_times = 2
 # Jenkins 的 junit 插件靠它判定构建成功/失败，**不要删**
 # 对应环境变量：UI_CI_JUNIT_XML
 junit_xml = Report/junit-results.xml
+
+# 失败自动取证：用例失败时自动保存截图 + 页面源码（见 Common/failureCapture.py）。
+# 关掉后 CI 上的失败就只能靠人工重放，强烈建议保持 true。
+# 对应环境变量：UI_CI_ARTIFACTS
+artifacts = true
+
+# 取证文件的存放目录（相对工程根目录），实际会再拼一层日期子目录，
+# 例如 Report/artifacts/2026-10-06/。
+# 放在 Report/ 下是为了 CI 只归档一个目录就够（见 Jenkinsfile 的 archiveArtifacts）
+# 对应环境变量：UI_CI_ARTIFACTS_DIR
+artifacts_dir = Report/artifacts
 
 # 额外的 Chrome 启动参数（逗号分隔），一般留空
 # 对应环境变量：UI_CI_EXTRA_CHROME_ARGS

@@ -29,7 +29,7 @@
 
 ===========================================================
 
-【新人必读：三条设计约定】
+【新人必读：四条设计约定】
 
 1）为什么 6 条用例共用同一个浏览器？
     因为它们是**一条串行业务流**，第 4 步上传必须有第 3 步的登录态，
@@ -47,13 +47,28 @@
     只在一个地方加"失败自动截图"，改动成本最低。
     新增用例时直接调 self.check_title('用例名', '期望标题') 即可。
 
+4）为什么前 3 条有 @readonly 而后 3 条没有？
+    这是**作用域标记**，用来区分"这条用例会不会改动真实数据"：
+        test_1/2/3  只是登录、跳页 -> 标 @readonly，生产环境也敢跑
+        test_4      真实上传视频    -> 写
+        test_5      查询本身只读，但它依赖 test_4 刚上传的素材才能验证，
+                    单独放到生产环境跑没有意义，所以也留在「写」这一组
+        test_6      真实提交报送单  -> 写
+    框架据此做两件事：
+        ① config.ini [testcase] mode = readonly 时，自动跳过写用例；
+        ② 环境守卫发现"疑似生产 + 含写用例"时直接中止（退出码 2）。
+    详见 Common/testcase_meta.py 与 Common/env_guard.py。
+    ★ 新增用例时先问自己两句：页面数据会不会变？会不会依赖前面用例的产物？
+      两个都否，才加 @readonly。
+
 【新人注意】
     1. 参数全部来自 config.ini -> [testcase]，不要在用例里硬编码账号或文件路径。
-    2. 被测地址默认是**生产环境**，跑之前确认上传/报送操作不会污染真实数据。
+    2. 被测地址若是生产环境，跑全量会真实上传/报送；只读跑法：
+       python run.py --env test        # 用 [env_test] 档，自带 mode = readonly
     3. 用例之间没有数据隔离，任何一步失败，后面的用例会连着失败 ——
        排错时优先修最早失败的那一条。
-    4. 排查失败：先看控制台输出，再看 Logs/日期/Error_Logs/，
-       最后看 img/日期/ 里自动保存的失败截图。
+    4. 排查失败：先看控制台输出的「失败摘要」，再看 Logs/日期/Error_Logs/，
+       最后看 Report/artifacts/日期/（框架自动保存的失败截图 + 页面源码）。
 ==========================================================================
 """
 
@@ -62,6 +77,7 @@ import unittest
 from Common.basePage import BasePage
 from Common.config import Config
 from Common.log import log1
+from Common.testcase_meta import readonly
 from PageObject.loginPage import LoginPage
 
 
@@ -143,9 +159,17 @@ class TestLogin(unittest.TestCase):
 
     # ====================================================================== #
     # 用例（执行顺序由方法名 test_N 前缀固定，不要随意改名）
+    #
+    # ★ 作用域标记说明（见 Common/testcase_meta.py）
+    #   前 3 条标了 @readonly：它们只做登录和页面跳转，不产生任何业务数据，
+    #     所以在生产环境也能安全执行 —— 这也是冒烟集敢取前 3 条的原因。
+    #   后 3 条没标：上传视频、提交报送单都会真实改动数据，
+    #     保持默认的「写」作用域，在生产特征的环境下会被环境守卫拦下。
+    #   新增用例时照这个标准判断：页面数据会不会变？会变就别加 @readonly。
     # ====================================================================== #
+    @readonly
     def test_1login(self):
-        """用例1：登录成功。
+        """用例1：登录成功（只读）。
 
         步骤：输入账号密码 -> 点登录 -> 校验跳转到统一门户首页。
         """
@@ -154,8 +178,9 @@ class TestLogin(unittest.TestCase):
         self.login_page.login(self.username, self.password)
         self.check_title(case_name, self.title_login)
 
+    @readonly
     def test_2select_scxt(self):
-        """用例2：从门户进入融媒体生产系统。
+        """用例2：从门户进入融媒体生产系统（只读）。
 
         步骤：点「发布系统」（会新开标签页）-> 切到新标签页 -> 等页面加载 -> 校验标题。
 
@@ -169,8 +194,9 @@ class TestLogin(unittest.TestCase):
         self.login_page.my_sleep(2)             # 等新页面首屏渲染
         self.check_title(case_name, self.title_workbench)
 
+    @readonly
     def test_3material(self):
-        """用例3：从工作台进入素材库。
+        """用例3：从工作台进入素材库（只读）。
 
         步骤：左侧菜单 内容管理 -> 素材库 -> 校验标题变成「素材库 - 云媒资系统」。
         """

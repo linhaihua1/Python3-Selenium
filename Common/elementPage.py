@@ -34,16 +34,37 @@
         报送：把素材提交进入审核流程，需要选择「初审人」（第一级审核人）后保存。
 
 【新人注意 —— 本文件最大的坑】
-    下面很多 xpath 是**绝对路径**，形如 /html/body/div[4]/div/div[2]/... 或
+    下面很多 xpath 是**绝对路径或长链路**，形如 /html/body/div[4]/div/div[2]/... 或
     //*[@id='app']/div/div[2]/section/section/main/...
     这种写法对 DOM 层级极度敏感，页面上多套一层 div 就会失效。
-    已知最脆弱的几个：submission（报送按钮）、first_trial（初审下拉）、
-    person_of_first_instance（初审人选项）。
-    改进方向：逐步替换成相对定位（按文本、按属性），例如
-        //span[normalize-space(text())='报 送']
-        //button[contains(@class,'report')]
-    【改定位时的验证方法】直接跑 python run.py，看 Logs/Error_Logs 里
-    "没有定位到元素,定位方式：... 使用的值：..." 一行，再配合 img/ 里的截图。
+
+    【先跑一次体检，看清现状】
+        python -m Common.locator_policy            # 完整报告
+        python -m Common.locator_policy --issues   # 只看需要改进的条目
+    它会按 GOOD / INDEXED / DEEP_INDEX / ABSOLUTE 四级给每条定位评级，
+    **只读源码、不启动浏览器**，随时可跑。
+
+    【已知最脆弱的三条（按危险程度排序）】
+        1. person_of_first_instance —— 绝对路径 + "下拉列表第 8 项"，序号写死
+        2. first_trial             —— 绝对路径，从 /html/body 逐层写下来
+        3. submission              —— 长链路 + td[8]（第 8 列）+ button[3]
+    前两条已在本文件中给出**语义化替代写法**（见对应条目上方的注释，搜 "替代写法"）。
+    替换到真实环境验证一次后，把 loginPage 里的引用改过去即可。
+
+    【新增定位时的优先级（按稳健程度从高到低）】
+        id > name > 可见文字 > 占位提示 > 元素属性 > css > 相对 xpath
+        绝对路径 xpath（以 /html 开头）**一律不要写**
+    框架已提供这些语义化定位能力，优先用它们（见 Common/basePage.py）：
+        get_element_by_text / click_by_text    —— 按页面上看得见的文字找
+        get_element_by_attr                    —— 按属性找
+        type_by_placeholder                    —— 按输入框的灰色提示文字找
+
+    【改定位时的验证方法】
+        python -m Common.locator_policy --issues          # 先确认改完评级变好
+        python tests/run_unit_tests.py                    # 再确认框架没坏
+        python run.py --cases <用例名>                     # 最后到真实环境验证
+        失败时看 Logs/日期/Error_Logs/ 的"没有定位到元素"一行，
+        以及 Report/artifacts/日期/ 里框架自动保存的截图与页面源码。
 ==========================================================================
 """
 
@@ -83,13 +104,34 @@ class Element1:
 
     # ==================== 业务动作二：关键字查询 ====================
     keyword = ['xpath', "//*[@id='app']/div/div[2]/section/section/main/div[1]/form/div[2]/div/div/input"]  # 关键字输入框
-    querybutton = ['xpath', "//*[@id='app']/div/div[2]/section/section/main/div[1]/form/div[6]/div/button/span"]  # 「查 询」
-    replacement = ['xpath', "//*[@id='app']/div/div[2]/section/section/main/div[1]/form/div[7]/div/button"]  # 「重 置」
+    # 「查 询」按钮
+    querybutton = ['xpath', "//*[@id='app']/div/div[2]/section/section/main/div[1]/form/div[6]/div/button/span"]
+    # 「重 置」按钮
+    replacement = ['xpath', "//*[@id='app']/div/div[2]/section/section/main/div[1]/form/div[7]/div/button"]
 
     # ==================== 业务动作三：报送 ====================
     # 素材列表第一行的「报 送」按钮（td[8] 是第 8 列，前端调列顺序会失效）
-    submission = ['xpath', "//*[@id='app']/div/div[2]/section/section/main/div[2]/div[4]/div[2]/table/tbody/tr[1]/td[8]/div/button[3]/span"]
+    # ⚠️ 脆弱（DEEP_INDEX）：长链路 + td[8] + button[3] 三重写死。
+    #    替代写法（按可见文字锚定，需在真实环境验证一次后启用）：
+    #        ['xpath', "//table//tr[1]//button[.//span[normalize-space(text())='报 送']]/span"]
+    #    或者更彻底：用 click_by_text('报 送') 走框架的语义定位。
+    #    下面这个值用隐式字符串拼接写成多行，是为了不超长 —— 拼接结果与原值完全一致。
+    submission = ['xpath',
+                  "//*[@id='app']/div/div[2]/section/section/main/div[2]/div[4]/div[2]"
+                  "/table/tbody/tr[1]/td[8]/div/button[3]/span"]
+    # ⚠️ 脆弱（ABSOLUTE，全工程最脆弱之一）：从 /html/body 逐层写死，
+    #    且 div[4] 这种序号完全依赖当前 DOM 结构。页面一改必挂。
+    #    替代写法（按「初审」这段文字向上找到所在的表单项，再取里面的下拉箭头）：
+    #        ['xpath', "//*[normalize-space(text())='初审']/ancestor::div[contains(@class,'el-form-item')]//i"]
+    #    若前端能加 data-testid（如 data-testid="first-trial-select"），
+    #    直接用 ['css', '[data-testid=first-trial-select]'] 最稳 —— 建议找前端提这个需求。
     first_trial = ['xpath', "/html/body/div[4]/div/div[2]/section/main/form/div[2]/div/div/div/span/span/i"]  # 「初审」下拉框
+    # ⚠️ 脆弱（ABSOLUTE，全工程最脆弱的一条）：不只是绝对路径，
+    #    连"下拉列表第 8 项"这个**业务序号**都写死了 —— 只要初审人列表顺序一变就选错人。
+    #    替代写法（按人名字定位，而不是按位置）：
+    #        ['xpath', "//li[contains(@class,'el-select-dropdown__item')][normalize-space(text())='<初审人姓名>']"]
+    #    姓名从 config.ini [testcase] 读，新增一项 first_trial_person 即可，
+    #    这样换人只改配置，不用改代码。
     person_of_first_instance = ['xpath', "/html/body/div[5]/div[1]/div[1]/ul/li[8]"]  # 下拉列表里的第 8 项（初审人）
     save = ['xpath', "(.//*[normalize-space(text()) and normalize-space(.)='返 回'])[1]/following::span[1]"]  # 「保 存」
 

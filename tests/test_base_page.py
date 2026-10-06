@@ -271,6 +271,27 @@ class TestInteraction(_PageTestCase):
         with self.assertRaises(NoSuchElementException):
             page.get_text(['id', 'x'], timeout=0.05)
 
+    def test_get_value读的是value属性而不是显示文字(self):
+        """get_text 取显示文字、get_value 取 value，两者不能混用。
+
+        典型场景：输入框里填了字，它的 .text 是空的，只能靠 value 读回来。
+        """
+        element = FakeElement(text='', attributes={'value': '测试关键字'})
+        page = self.make_page(FakeDriver(element=element))
+        self.assertEqual(page.get_value(['id', 'kw']), '测试关键字')
+        self.assertEqual(element.attributes_read, ['value'])
+
+    def test_get_value在属性缺失时返回None(self):
+        page = self.make_page(FakeDriver(element=FakeElement(attributes={})))
+        self.assertIsNone(page.get_value(['id', 'kw']))
+
+    def test_get_value元素不存在时抛出异常(self):
+        """必须抛异常：静默返回 None 会让"输入是否生效"的断言假通过。"""
+        driver = FakeDriver(find_error=NoSuchElementException('无'))
+        page = self.make_page(driver)
+        with self.assertRaises(NoSuchElementException):
+            page.get_value(['id', 'kw'], timeout=0.05)
+
     def test_use_js执行成功(self):
         driver = FakeDriver()
         page = self.make_page(driver)
@@ -449,7 +470,7 @@ class TestScreenshotAndQuit(_PageTestCase):
     def test_截图保存到日期目录(self):
         driver = FakeDriver()
         page = self.make_page(driver)
-        with patch_dirs() as root:
+        with patch_dirs():
             path = page.get_img()
         self.assertTrue(path.endswith('.png'))
         self.assertEqual(len(driver.screenshots), 1)

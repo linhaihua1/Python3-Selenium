@@ -15,16 +15,23 @@
               └─> Common/sentMail.py  读 [sender]、[addressed]
     Common/configOverWriter.py 是本类的底座（定制版 ConfigParser）。
 
-【config.ini 的段位说明】
+【config.ini 的段位说明（共 11 类）】
     [environment]  被测环境：url、browser
-    [testcase]     用例参数：登录账号、上传文件、上传方式、上传表单字段
+    [testcase]     用例参数：登录账号、上传文件、上传方式、写入范围 mode
+    [assert]       断言期望值：各页面标题（换系统只改这里）
+    [system]       跨系统适配：登录页的文案特征（placeholder / 按钮文字）
+    [safety]       ★安全守卫：防止误连生产环境（见 Common/env_guard.py）
+    [env_xxx]      ★多环境：一套代码在 dev/test/prod 间切换（run.py --env）
     [report]       报告元信息：标题、文件名、执行人、描述
+    [ci]           流水线适配：无头、超时、冒烟集、JUnit 路径、失败取证
+    [notify]       群机器人通知：钉钉 / 企业微信 webhook
     [sender]       发件人：邮箱、SMTP 授权码、显示名
     [addressed]    收件人：键是姓名、值是邮箱（发送时遍历取值）
 
 【新人必读：两种读取风格】
     推荐：Config.get('段', '键', '默认值')   —— 取不到就返回默认值，不抛异常
     旧式：Config.config_read('段', '键')     —— 等价于 get，保留给老代码
+    多值：Config.get_list('段', '键')        —— 返回列表，支持逗号/换行/分号分隔
 
 【新人必读：环境变量覆盖（CI/CD 的关键机制）】
     读取任意配置项前，会先查同名环境变量，规则：
@@ -45,7 +52,7 @@
        提交代码前请确认该文件不要入库（仓库根目录的 .gitignore 已忽略它），
        真实值建议通过环境变量或 Jenkins 凭据注入。
     2. 写入方法（set_value / config_delete）会直接改磁盘文件，
-       只建议给 configTest.py 这类校验脚本使用，不要在用例里随机写配置。
+       只建议给一次性维护脚本使用，不要在用例里随机写配置。
 ==========================================================================
 """
 
@@ -184,7 +191,6 @@ class Config:
         log1.error('%s下%s的值不是合法布尔值：%s，使用默认值 %s' % (section, key, value, fallback))
         return bool(fallback)
 
-
     @staticmethod
     def get_int(section, key, fallback=0):
         """读取整数配置（如超时秒数），非法值回退到 fallback。【预留】"""
@@ -194,6 +200,32 @@ class Config:
         except (TypeError, ValueError):
             log1.error('%s下%s的值无法转为整数：%s' % (section, key, value))
             return fallback
+
+    @staticmethod
+    def get_list(section, key, fallback=None, sep='\n,;'):
+        """读取"多个值"型配置，返回去掉空白与空项的字符串列表。【在用】
+
+        :param sep: 分隔符集合，默认支持 换行 / 逗号 / 分号 三种写法
+        :return: 列表；配置不存在时返回 fallback（或空列表）
+
+        用在哪：环境守卫的生产特征关键字（[safety] url_blocklist）、
+        冒烟用例列表（[ci] smoke_cases）都是这种"可填多个值"的配置。
+        相比在调用处各自 split，这里统一处理了三件事：
+            ① 三种分隔符都认（写逗号还是换行都行，不容易配错）
+            ② 空项自动丢弃（'a,,b' 不会产生一个空字符串）
+            ③ 每项 strip（配置里手写的空格不会变成匹配失败的原因）
+        """
+        value = Config.get(section, key, None)
+        if value is None:
+            return list(fallback) if fallback else []
+        if isinstance(value, (list, tuple)):
+            raw_items = list(value)
+        else:
+            text = str(value)
+            for ch in sep:
+                text = text.replace(ch, '\n')
+            raw_items = text.split('\n')
+        return [item.strip() for item in raw_items if str(item).strip()]
 
     @staticmethod
     def has_section(section):

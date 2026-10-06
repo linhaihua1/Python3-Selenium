@@ -24,6 +24,8 @@
 
 import unittest
 
+from Common.testcase_meta import readonly, write
+
 
 class PassCase(unittest.TestCase):
     """模拟一条通过的用例。"""
@@ -91,3 +93,74 @@ class PrintCase(unittest.TestCase):
 
     def test_print(self):
         print('用例里的输出内容')
+
+
+# ==========================================================================
+# 作用域标记相关样例（供 tests/test_testcase_meta.py 使用）
+#   这四组覆盖了"框架怎么判断一条用例会不会写数据"的全部分支。
+# ==========================================================================
+class ReadonlyByClassCase(unittest.TestCase):
+    """类级标记：整类只读（对应 TestSuites/testMaterialCheck.py 的写法）。"""
+
+    scope = 'readonly'
+
+    def test_a(self):
+        pass
+
+    def test_b(self):
+        pass
+
+
+class WriteByDefaultCase(unittest.TestCase):
+    """什么标记都不加 -> 默认算「写用例」。
+
+    这是刻意的失败安全设计：忘了标最多是跑不了，
+    反过来若默认只读，忘了标的写用例就会直接放到生产上跑。
+    """
+
+    def test_a(self):
+        pass
+
+
+class WriteByClassCase(unittest.TestCase):
+    """类级显式标成写（等价于不标，用于验证两种写法结果一致）。"""
+
+    scope = 'write'
+
+    def test_a(self):
+        pass
+
+
+class MixedScopeCase(unittest.TestCase):
+    """同一个类里混着两种作用域：方法级标记优先于类级。"""
+
+    scope = 'readonly'
+
+    def test_inherit_readonly(self):
+        """没单独标记 -> 跟随类上的 readonly。"""
+        pass
+
+    @write
+    def test_override_write(self):
+        """单条显式改回写 -> 覆盖类级设置。"""
+        pass
+
+
+class BadScopeValueCase(unittest.TestCase):
+    """scope 写成非法值 -> 应安静地退回默认（write），不能崩。"""
+
+    scope = '只读'      # 非法：必须是英文 readonly / write
+
+    def test_a(self):
+        pass
+
+
+class OnlyMarkedReadonlyCase(unittest.TestCase):
+    """类上没标，只有方法标了只读。"""
+
+    @readonly
+    def test_readonly_one(self):
+        pass
+
+    def test_write_one(self):
+        pass

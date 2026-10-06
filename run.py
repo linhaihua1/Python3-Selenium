@@ -19,6 +19,7 @@
 【怎么用】
     # ---- 本机开发 ----
     python run.py                                # 用 config.ini 里的配置（有界面，能看到浏览器操作）
+    python run.py --env test                     # ★切到 [env_test] 档：地址/无头/写入范围一次到位
     python run.py --headless                     # 无头运行，和流水线上行为一致
     python run.py --suite smoke                  # 只跑冒烟用例（不产生数据副作用）
     python run.py --title 冒烟测试 --filename smoke.html
@@ -27,21 +28,39 @@
     python run.py --mail                         # 跑完把报告当附件发邮件
 
     # ---- Jenkins 里 ----
-    python run.py --suite smoke --headless --junit Report/junit-results.xml
+    python run.py --env test --suite smoke --headless --junit Report/junit-results.xml
+
+    # ---- 排查环境问题（不跑用例）----
+    python run.py --preflight                    # 体检这台机器能不能跑 UI 自动化
+    python -m Common.preflight --quiet           # 等价写法，只列出有问题的项
 
 【退出码（CI 判定构建成败的依据）】
     0 = 全部通过     1 = 有用例失败     2 = 环境/配置问题
     流水线的 junit 插件负责展示用例明细，退出码负责把构建标红，两者缺一不可。
 
+【三道闸门（企业级的关键，跑错环境这种事必须由框架拦住）】
+    ① 写入范围   [testcase] mode = readonly 时，只跑标记为只读的用例
+                 标记方式：类属性 scope = 'readonly' 或方法上加 @readonly
+    ② 环境守卫   地址为空/占位、不在白名单、疑似生产且含写用例 -> 直接中止（退出码 2）
+                 配置在 config.ini -> [safety]，实现见 Common/env_guard.py
+    ③ 环境自检   Python/selenium/浏览器/驱动版本/目录可写 有问题 -> 直接中止（退出码 2）
+                 配置在 config.ini -> [ci] preflight，实现见 Common/preflight.py
+    被拦下时不会有任何浏览器被打开，控制台会打印"原因"一行说明该改哪个配置。
+
 【新人注意】
     1. 首次运行前先装依赖：pip install -r requirements.txt
     2. config.ini 里默认填的是**生产环境**地址，跑全量用例会真实上传视频、
        真实提交报送单，跑之前务必确认环境与数据影响！
+       （现在有环境守卫兜底，但守卫靠配置判断，配置本身仍要填对）
     3. 本文件刻意保持"薄"：想改测试逻辑请去 TestSuites/ 或 Common/runner.py，
        不要把业务代码堆到这里。
     4. 参数是怎么生效的？全部转成 UI_ 开头的环境变量，再由 Common/config.py
        统一覆盖配置 —— 全工程只有"环境变量 > config.ini > 代码默认值"一条优先级链路。
-    5. 常用定位手段：控制台输出的「失败摘要」、Logs/日期/Error_Logs/、img/日期/ 的失败截图。
+    5. 常用定位手段：控制台输出的「失败摘要」、Logs/日期/Error_Logs/、
+       Report/artifacts/日期/（失败自动截图与页面源码）、img/日期/（用例主动截图）。
+    6. ★ 突然跑不起来（浏览器起不来、报 session not created、卡很久才抛错）？
+       先跑 `python run.py --preflight`。它会告诉你是不是浏览器/驱动这类环境问题，
+       并给出具体要改什么 —— 比对着堆栈猜快得多。
 ==========================================================================
 """
 
@@ -111,12 +130,36 @@ def parse_args(argv=None):
                         help='切换被测系统：读 config.ini 的 [system_名称] 段，'
                              '自动应用该系统的地址/账号/用例集。配合 --pattern 可再覆盖用例集')
 
+    # ---- 多环境切换 ----
+    # 「被测系统」和「运行环境」是两件事：
+    #   --system erp          -> 换一个产品（账号、用例集都不同）
+    #   --env prod            -> 同一个产品，换一套环境（地址不同、能不能写不同）
+    # 两者都只是把配置翻译成环境变量，风格完全一致。
+    parser.add_argument('--env',
+                        help='切换运行环境：读 config.ini 的 [env_名称] 段（如 --env test），'
+                             '自动应用该环境的地址/浏览器/无头模式/写入范围。'
+                             '换环境只改配置，不改任何用例代码')
+
     # ---- 结果输出 ----
     parser.add_argument('--junit',
                         help='JUnit XML 输出路径；传 none 可关闭（默认取 [ci] junit_xml）')
     parser.add_argument('--mail', action='store_true', help='运行结束后发送邮件')
     parser.add_argument('--notify', action='store_true',
                         help='运行结束后把结果推送到群机器人（钉钉/企业微信，配置见 [notify]）')
+
+    # ---- 环境自检 ----
+    # 只体检、不跑用例：用于"Jenkins 节点第一次接入"和"本机突然跑不起来"两个场景。
+    # 它不打开浏览器，所以哪怕环境坏得彻底也能跑出结论。
+    parser.add_argument('--preflight', action='store_true',
+                        help='只做运行环境自检（Python/selenium/浏览器/驱动/目录），不跑用例；'
+                             '有致命问题时退出码 2')
+
+    # ---- 并行执行 ----
+    # 企业级规模化的关键：用例文件之间相互独立，可拆给多个进程同时跑。
+    # 默认 1（串行，与历史行为完全一致）；传 2/4/8 即启用文件级并行。
+    parser.add_argument('--workers', type=int, default=1,
+                        help='并行进程数（按测试文件分片）。默认 1=串行；'
+                             '传 2/4/8 启用多进程并行，用例多时显著提速')
     return parser.parse_args(argv)
 
 
@@ -151,43 +194,73 @@ def apply_runtime_overrides(args):
     return applied
 
 
-def apply_system(system_name):
-    """按 --system 切换被测系统：把 [system_名称] 段翻译成环境变量覆盖。
+#: profile 段（[system_名称] / [env_名称]）里可写的键 -> 对应的环境变量名。
+#: 新增可覆盖项时只改这张表，两种 profile 自动同时支持。
+#: 键名是配置里写的，值必须与 Common/config.py 的 UI_<段>_<键> 规则一致。
+PROFILE_KEY_MAP = {
+    'url': 'UI_ENVIRONMENT_URL',
+    'browser': 'UI_ENVIRONMENT_BROWSER',
+    'headless': 'UI_CI_HEADLESS',
+    'username': 'UI_TESTCASE_LOGIN_USERNAME',
+    'password': 'UI_TESTCASE_LOGIN_PASSWORD',
+    # mode：readonly 只跑只读用例 / all 不限（见 Common/testcase_meta.py）
+    'mode': 'UI_TESTCASE_MODE',
+    # allow_write：是否允许跑写操作用例（见 Common/env_guard.py）
+    'allow_write': 'UI_SAFETY_ALLOW_WRITE',
+}
 
-    支持的键（任一可选，缺了就不覆盖、沿用全局配置）：
-        url       -> UI_ENVIRONMENT_URL
-        browser   -> UI_ENVIRONMENT_BROWSER
-        username  -> UI_TESTCASE_LOGIN_USERNAME
-        password  -> UI_TESTCASE_LOGIN_PASSWORD
-        pattern   -> 返回给调用方，用于选定该系统的用例集
-        headless  -> UI_CI_HEADLESS
+#: 不翻译成环境变量、而是返回给调用方的键：用例集匹配规则
+PROFILE_PATTERN_KEY = 'pattern'
+
+#: 敏感键：日志里打码，避免把密码写进 Jenkins 控制台（控制台是多人可见的）
+PROFILE_SECRET_KEYS = ('password',)
+
+
+def apply_profile(name, kind='system'):
+    """按名称应用一个配置档：把 [<kind>_名称] 段翻译成环境变量覆盖。
+
+    :param name: 档位名称，如 'test' / 'erp'
+    :param kind: 'system'（被测系统）或 'env'（运行环境）
+    :return: 该档位配置的 pattern（字符串或 None），供选定用例集
+    :raise SystemExit: 段不存在时立即中止 —— 配置写错的代价必须远小于"跑错环境"
+
+    为什么两个能力共用一个实现：
+        --system 和 --env 本质上都是"选一组配置来覆盖默认值"，
+        差别只在语义。共用后新增一个可覆盖键只需改 PROFILE_KEY_MAP。
+    """
+    if not name:
+        return None
+    from Common.config import Config
+    section = '%s_%s' % (kind, name)
+    if not Config.has_section(section):
+        raise SystemExit(
+            '未找到配置段 [%s]，请在 config.ini 中添加该段'
+            '（可参考 config.ini.example 的示例）' % section)
+
+    applied = []
+    for key, env in PROFILE_KEY_MAP.items():
+        value = Config.get(section, key, '')
+        if value:
+            os.environ[env] = value
+            shown = '***' if key in PROFILE_SECRET_KEYS else value
+            applied.append('%s=%s' % (key, shown))
+    pattern = Config.get(section, PROFILE_PATTERN_KEY, '') or None
+    if applied:
+        log1.info('已应用配置档 [%s]：%s' % (section, ', '.join(applied)))
+    return pattern
+
+
+def apply_system(system_name):
+    """按 --system 切换被测系统。
+
+    保留这个函数名（而不是让调用方直接写 apply_profile(..., 'system')）：
+    名称本身说明了用途，用例与单测里读起来更清楚。
+    支持的键见 PROFILE_KEY_MAP：url / browser / headless / username /
+    password / mode / allow_write，外加 pattern。
 
     :return: 该系统配置的 pattern（字符串或 None），供 run() 选用例集
     """
-    if not system_name:
-        return None
-    from Common.config import Config
-    section = 'system_%s' % system_name
-    if not Config.has_section(section):
-        raise SystemExit('未找到被测系统配置 [system_%s]，请在 config.ini 中添加该段' % system_name)
-
-    mapping = {
-        'url': 'UI_ENVIRONMENT_URL',
-        'browser': 'UI_ENVIRONMENT_BROWSER',
-        'username': 'UI_TESTCASE_LOGIN_USERNAME',
-        'password': 'UI_TESTCASE_LOGIN_PASSWORD',
-        'headless': 'UI_CI_HEADLESS',
-    }
-    applied = []
-    for key, env in mapping.items():
-        val = Config.get(section, key, '')
-        if val:
-            os.environ[env] = val
-            applied.append('%s=***' % key if key == 'password' else '%s=%s' % (key, val))
-    pattern = Config.get(section, 'pattern', '') or None
-    if applied:
-        log1.info('已切换到被测系统 [%s]，应用配置：%s' % (system_name, ', '.join(applied)))
-    return pattern
+    return apply_profile(system_name, kind='system')
 
 
 def print_conclusion(summary):
@@ -209,6 +282,9 @@ def print_conclusion(summary):
     print('用例      : %d 条（失败 %d / 错误 %d / 跳过 %d）'
           % (summary['tests_run'], summary['failures'], summary['errors'], summary['skipped']))
     print('耗时      : %.1f 秒' % summary['duration'])
+    # 被守卫拦下时把原因打出来：值班的人看日志就知道该改哪个配置，不用去翻代码
+    if summary.get('reason'):
+        print('原因      : %s' % summary['reason'])
     print('HTML 报告 : %s' % (summary['report'] or '未生成'))
     print('JUnit XML : %s' % (summary['junit'] or '未生成'))
     print('退出码    : %d' % code)
@@ -224,29 +300,63 @@ if __name__ == '__main__':
     args = parse_args()
     log1.info('===== UI 自动化测试开始 =====')
 
-    # 1) 先按 --system 切换被测系统（会把 [system_名称] 翻译成环境变量覆盖，
-    #    并可能给出该系统专属的用例 pattern）
+    # 1) 先应用配置档：--system 换产品，--env 换环境。
+    #    顺序有讲究 —— 后应用的覆盖先应用的，而"环境"比"产品"更具体
+    #    （同一个产品在不同环境地址不同），所以 env 放后面。
     system_pattern = apply_system(args.system)
-    # 用例集优先级：命令行 --pattern > 系统配置 pattern > 默认 test*.py
-    pattern = args.pattern if args.pattern != 'test*.py' else (system_pattern or args.pattern)
+    env_pattern = apply_profile(args.env, kind='env')
+    # 用例集优先级：命令行 --pattern > 环境档 pattern > 系统档 pattern > 默认 test*.py
+    pattern = args.pattern if args.pattern != 'test*.py' else (
+        env_pattern or system_pattern or args.pattern)
 
     # 2) 命令行参数 -> 环境变量 -> config 覆盖（在 system 之后，保证命令行优先级最高）
     apply_runtime_overrides(args)
 
+    # 2.5) 只做运行环境自检：体检完直接结束，不进 runner ——
+    #      不收集用例、不开浏览器。用在"新节点接入先验环境"和"突然跑不起来先排环境"。
+    if args.preflight:
+        from Common import preflight
+        from Common.config import Config
+        findings = preflight.collect(
+            browser=Config.get('environment', 'browser', 'chrome'),
+            browser_binary=Config.get('ci', 'chrome_binary', ''),
+        )
+        print(preflight.format_report(findings))
+        sys.exit(2 if preflight.has_error(findings) else 0)
+
     # 3) 执行测试。runner.run() 返回汇总字典，例如：
     # {'report': '...报告.html', 'junit': '...junit-results.xml',
     #  'tests_run': 6, 'failures': 0, 'errors': 0, 'exit_code': 0, ...}
-    summary = runner.run(
-        pattern=pattern,
-        title=args.title,
-        report_name=args.filename,
-        tester=args.tester,
-        description=args.description,
-        suite_kind=args.suite,
-        cases=args.cases,
-        junit=args.junit,
-        send_mail=args.mail,
-    )
+    if args.workers and args.workers > 1:
+        # 并行模式：按测试文件分片，多进程同时跑，结果合并成一份
+        from Common.parallelRunner import run_parallel
+        summary = run_parallel(
+            workers=args.workers,
+            pattern=pattern,
+            title=args.title,
+            tester=args.tester,
+            description=args.description,
+            suite_kind=args.suite,
+            cases=args.cases,
+            junit=args.junit,
+        )
+        # 并行模式下邮件/群通知仍在主进程统一触发（见下方）
+        if args.mail:
+            from Common.sentMail import sent_mail
+            if summary.get('report'):
+                sent_mail(summary['report'])
+    else:
+        summary = runner.run(
+            pattern=pattern,
+            title=args.title,
+            report_name=args.filename,
+            tester=args.tester,
+            description=args.description,
+            suite_kind=args.suite,
+            cases=args.cases,
+            junit=args.junit,
+            send_mail=args.mail,
+        )
 
     print_conclusion(summary)
 

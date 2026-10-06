@@ -19,8 +19,9 @@
       ├─ PageObject/          页面对象层：按页面封装操作
       ├─ TestSuites/          用例层：test*.py 才会被收集
       ├─ Logs/日期/           运行日志（All_Logs 全量 / Error_Logs 仅错误）
-      ├─ img/日期/            失败截图
+      ├─ img/日期/            失败截图（用例主动调用 get_img() 时保存）
       ├─ Report/              HTML 测试报告 + JUnit XML 结果（CI 归档这一整个目录）
+      │    └─ artifacts/日期/  失败自动取证：截图 + 页面源码（见 Common/failureCapture.py）
       ├─ docs/                使用文档与 CI/CD 接入指南
       ├─ config.ini           环境、账号、报告、邮件、CI 配置
       └─ Jenkinsfile          Jenkins 流水线定义
@@ -50,6 +51,11 @@ htmlreport_dir = os.path.join(base_dir, "Report")
 # JUnit XML 结果文件：CI 流水线（Jenkins 的 junit 插件）读取它判定构建是否通过。
 # 本机运行时也会生成，方便随时用工具解析结果，见 Common/junitReport.py。
 junitreport_file = os.path.join(htmlreport_dir, "junit-results.xml")
+
+# 失败取证根目录：用例失败时自动保存的截图与页面源码放这里（按日期分子目录）。
+# 放 Report/ 下面是为了让 CI 只归档一个目录就够 —— 见 Jenkinsfile 的 archiveArtifacts。
+# 实际写入位置会再拼一层日期，例如 Report/artifacts/2026-10-06/
+artifacts_dir = os.path.join(htmlreport_dir, "artifacts")
 
 
 def ensure_dir(path):

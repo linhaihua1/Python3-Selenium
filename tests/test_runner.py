@@ -454,7 +454,8 @@ class TestRunEnvErrors(_RunTestCase):
         self.assertIsNone(summary['report'])
 
     def test_冒烟模式只跑命中的用例(self):
-        ini = '[ci]\nsmoke_cases = test_a_pass\n'
+        ini = ('[environment]\nurl = http://smoke-env.local/login\n\n'
+               '[ci]\nsmoke_cases = test_a_pass\n')
         root, cases_dir, _ = self.make_env(CASE_SOURCE_PASS, ini_text=ini)
         summary, _ = self.run_runner(tests_dir=cases_dir, pattern='demo_test.py',
                                      suite_kind='smoke')
@@ -462,7 +463,8 @@ class TestRunEnvErrors(_RunTestCase):
         self.assertEqual(summary['tests_run'], 1)
 
     def test_显式cases参数覆盖冒烟配置(self):
-        ini = '[ci]\nsmoke_cases = test_a_pass\n'
+        ini = ('[environment]\nurl = http://smoke-env.local/login\n\n'
+               '[ci]\nsmoke_cases = test_a_pass\n')
         root, cases_dir, _ = self.make_env(CASE_SOURCE_PASS, ini_text=ini)
         summary, _ = self.run_runner(tests_dir=cases_dir, pattern='demo_test.py',
                                      suite_kind='smoke', cases='test_b_pass')

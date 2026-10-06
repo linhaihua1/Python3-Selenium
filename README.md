@@ -12,7 +12,11 @@
 | 文档 | 内容 | 什么时候看 |
 |---|---|---|
 | 本文 README | 快速上手、目录结构、常用命令 | **先看这个** |
+| [docs/新手入门指南.md](docs/新手入门指南.md) | 零基础入门：建立认知、阅读顺序、跑起来、接 Jenkins | **第一次接触本工程** |
+| [docs/实战-写你的第一条用例.md](docs/实战-写你的第一条用例.md) | 一次真实实操的全过程：想测什么 → 加元素 → 加动作 → 加用例 → 验证 | **想动手加第一条用例** |
+| [docs/用例编写模板.md](docs/用例编写模板.md) | 可照抄的代码模板（串行业务流 / 独立用例 / 页面对象） | 写用例时随手翻 |
 | [docs/使用文档.md](docs/使用文档.md) | 完整代码逻辑梳理、模块详解、扩展指南、排错、单元测试 | 要改用例 / 排查问题 |
+| [docs/接入新系统指南.md](docs/接入新系统指南.md) | 把框架套到党政 / 财务 / ERP / 商城 / 数据中台等系统 | 要接入别的系统 |
 | [docs/CI-CD接入指南.md](docs/CI-CD接入指南.md) | Jenkins 接入步骤、环境变量、凭据、容器化 | 要接流水线 |
 
 ---
@@ -178,6 +182,7 @@ python run.py --junit none                         # 不生成 JUnit XML
 python run.py --mail                               # 跑完发邮件
 python run.py --notify                             # 跑完推送到钉钉/企业微信群
 python run.py --system erp                         # 切换到 config.ini 的 [system_erp] 系统
+python run.py --workers 4                          # 4 进程并行执行（按文件分片），用例多时提速
 
 # ---- 其他 ----
 python entrance.py                                 # 备用入口（党建云主题报告）

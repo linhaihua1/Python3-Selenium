@@ -77,7 +77,7 @@ class GenericPage(BasePage):
             self.get_element_by_attr('placeholder', pwd_ph).send_keys(Keys.ENTER)
         # 等登录完成：出现成功标识文字 或 等加载遮罩消失
         if success_text:
-            self.get_element_by_text(success_text, timeout=Config.getint('ci', 'element_timeout', 15))
+            self.get_element_by_text(success_text, timeout=Config.get_int('ci', 'element_timeout', 15))
         else:
             self.wait_loading_gone()
         log1.info('通用登录流程完成')

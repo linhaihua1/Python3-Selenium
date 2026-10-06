@@ -88,6 +88,12 @@ smoke_cases = test_1login,test_2select_scxt
 junit_xml = Report/junit-results.xml
 extra_chrome_args =
 chrome_binary =
+# ★ 单元测试必须关掉运行环境自检。
+#   自检会去查这台机器有没有装浏览器、PATH 上的驱动版本对不对 ——
+#   那属于"机器状态"，不是"代码行为"。开着它就等于让单测结果依赖跑测的机器，
+#   没装 Chrome 的机器上会一片红，而这跟被测代码毫无关系。
+#   自检本身的行为由 tests/test_preflight.py 单独覆盖（那里把探测函数打桩）。
+preflight = false
 
 [sender]
 username = 单元测试发件人
@@ -201,6 +207,7 @@ def patch_dirs(root=None):
         Common/basePage.getcwd   -> 截图目录 img/
         Common/log.getcwd        -> 日志目录 Logs/
         Common/runner 的 base_dir / htmlreport_dir / testcases_dir
+        Common/dir_config 的同名常量（失败取证等模块在运行期读它，必须一起改）
         Common/sentMail.htmlreport_dir
 
     目录归属：不传 root 时由本函数新建并登记，进程退出统一删除；
@@ -210,8 +217,10 @@ def patch_dirs(root=None):
     fake_getcwd = _FakeGetcwd(root)
     report_dir = os.path.join(root, 'Report')
     cases_dir = os.path.join(root, 'TestSuites')
+    artifacts_dir = os.path.join(report_dir, 'artifacts')
 
     import Common.basePage as base_page
+    import Common.dir_config as dir_config_module
     import Common.log as log_module
     import Common.runner as runner_module
     import Common.sentMail as mail_module
@@ -226,6 +235,9 @@ def patch_dirs(root=None):
                 mock.patch.object(runner_module, 'base_dir', root), \
                 mock.patch.object(runner_module, 'htmlreport_dir', report_dir), \
                 mock.patch.object(runner_module, 'testcases_dir', cases_dir), \
+                mock.patch.object(dir_config_module, 'base_dir', root), \
+                mock.patch.object(dir_config_module, 'htmlreport_dir', report_dir), \
+                mock.patch.object(dir_config_module, 'artifacts_dir', artifacts_dir), \
                 mock.patch.object(mail_module, 'htmlreport_dir', report_dir):
             yield root
     finally:
@@ -342,14 +354,16 @@ class FakeElement:
     """假的 WebElement。所有动作只记录到 calls，可指定某动作抛异常。"""
 
     def __init__(self, text='', displayed=True, click_error=None,
-                 send_keys_error=None, clear_error=None):
+                 send_keys_error=None, clear_error=None, attributes=None):
         self.text = text
         self._displayed = displayed
         self.click_error = click_error
         self.send_keys_error = send_keys_error
         self.clear_error = clear_error
+        self.attributes = dict(attributes or {})   # get_attribute() 的返回值来源
         self.calls = []          # 形如 ['clear', 'send_keys', 'click']
         self.sent = []           # send_keys 收到的内容
+        self.attributes_read = []  # get_attribute 读过的属性名
 
     def clear(self):
         self.calls.append('clear')
@@ -369,6 +383,10 @@ class FakeElement:
 
     def is_displayed(self):
         return self._displayed
+
+    def get_attribute(self, name):
+        self.attributes_read.append(name)
+        return self.attributes.get(name)
 
 
 class FakeSwitchTo:
@@ -406,8 +424,13 @@ class FakeDriver:
     """假的 webdriver，覆盖 BasePage 实际会用到的全部 API。"""
 
     def __init__(self, title='', window_handles=None, element=None,
-                 elements=None, find_error=None):
+                 elements=None, find_error=None,
+                 page_source='<html><body>假页面</body></html>',
+                 source_error=None):
         self.title = title
+        self._page_source = page_source
+        # 让"读取页面源码失败"成为可造的场景（失败取证必须扛得住这种情况）
+        self.source_error = source_error
         self._handles = list(window_handles or ['window-1'])
         self.current_window_handle = self._handles[0]
         self._element = element if element is not None else FakeElement()
@@ -469,6 +492,21 @@ class FakeDriver:
         with open(path, 'wb') as fp:
             fp.write(b'fake-png')
         return True
+
+    def save_screenshot(self, path):
+        """与 get_screenshot_as_file 等价。
+
+        Selenium 的 WebDriver 同时提供这两个方法，真实项目里两种写法都有，
+        失败取证用的是 save_screenshot()，所以假对象也得有，
+        否则测出来的"取证成功"是假的。
+        """
+        return self.get_screenshot_as_file(path)
+
+    @property
+    def page_source(self):
+        if self.source_error:
+            raise self.source_error
+        return self._page_source
 
     @property
     def window_handles(self):

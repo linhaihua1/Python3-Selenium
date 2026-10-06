@@ -19,7 +19,7 @@ import os
 import unittest
 from unittest import mock
 
-from tests.helpers import load_module, patch_config, patch_dirs
+from tests.helpers import load_module, patch_config
 from Common import runner
 
 RUN_PY = os.path.join('run.py')
