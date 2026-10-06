@@ -77,7 +77,13 @@
 | 8 | 失败时要在海量控制台日志里翻原因 | 新增失败摘要打印（失败用例一行摘要直接输出到控制台） | `Common/runner.py` |
 | 9 | 容器里跑需要指定 Chrome 路径 | 新增 `[ci] chrome_binary` / `UI_CI_CHROME_BINARY` | `Common/basePage.py` |
 | 10 | 无流水线定义与容器镜像 | 新增 `Jenkinsfile`、`Dockerfile`、`.dockerignore` | 根目录 |
-| 11 | 框架代码改错了要等几分钟跑完 UI 用例才知道 | 新增 `tests/` 框架单元测试（350 项 / 26 秒，不开浏览器、无业务副作用），并在流水线里作为**第一个质量门禁** | `tests/`、`Jenkinsfile` |
+| 11 | 框架代码改错了要等几分钟跑完 UI 用例才知道 | 新增 `tests/` 框架单元测试（550+ 项 / 约 35 秒，不开浏览器、无业务副作用），并在流水线里作为**质量门禁** | `tests/`、`Jenkinsfile` |
+| 12 | 「本想打测试环境，结果在生产上真上传、真报送」 | **环境守卫**：地址占位/不在白名单/疑似生产且含写用例 → 开浏览器之前就中止（退出码 2）；配合**用例作用域标记**（`readonly` / `write`）实现"生产只跑只读" | `Common/env_guard.py`、`Common/testcase_meta.py`、`Common/runner.py` |
+| 13 | 环境问题（浏览器/驱动）伪装成"用例失败"，排查要翻 40 行堆栈 | **运行环境自检**：Python/selenium/浏览器/驱动版本/目录可写，1 秒给出结论与修复动作；单独成一个 stage | `Common/preflight.py`、`run.py --preflight` |
+| 14 | 失败后现场已经消失（页面关了、驱动退了） | **失败自动取证**：`JUnitResult` 钩子里自动存截图 + 页面源码到 `Report/artifacts/日期/`，绝不抛异常 | `Common/failureCapture.py`、`Common/driverRegistry.py`、`Common/junitReport.py` |
+| 15 | 元素定位随前端改版逐渐烂掉，没人发现 | **定位规范门禁**：静态扫描 `elementPage.py`，脆弱定位数量冻结成基线，可用 `--fail-over N` 在流水线卡口 | `Common/locator_policy.py`、`tests/test_locator_policy.py` |
+| 16 | 代码规范靠人自觉，注释/行宽/无用 import 越积越多 | 接入 `flake8`（规则见 `.flake8`），作为流水线最前面的一道门 | `.flake8`、`requirements-dev.txt`、`Jenkinsfile` |
+| 17 | 一套代码要在 dev / test / prod 之间切换 | 新增 `[env_名称]` 配置档：`python run.py --env test` 一次切地址/浏览器/无头/写入范围 | `run.py`、`config.ini.example` |
 
 ---
 
@@ -343,26 +349,48 @@ UI_CI_JUNIT_XML  = 'Report/junit-results.xml'
 APP_BUILD_NO     = "${params.APP_BUILD_NO}"
 ```
 
-### 7.4 四个阶段
+### 7.4 七个阶段
 
 | 阶段 | 做什么 | 关键点 |
 |---|---|---|
 | **拉取代码** | `checkout scm` 并打印分支/提交号 | 便于在控制台确认测的是哪份代码 |
-| **准备运行环境** | 建 `.venv` 独立虚拟环境 + `pip install -r requirements.txt` | 用独立 venv，避免污染节点全局 Python；`isUnix()` 分支处理 Windows/Linux 差异 |
+| **准备运行环境** | 建 `.venv` 独立虚拟环境 + 装 `requirements.txt` / `requirements-dev.txt` | 用独立 venv，避免污染节点全局 Python；`isUnix()` 分支处理 Windows/Linux 差异。dev 依赖缺失时不阻塞（内网源常缺 flake8） |
+| **代码规范检查** | `python -m flake8` | 静态检查，1 秒出结果。规则见根目录 `.flake8`；flake8 没装则跳过 |
+| **定位规范检查** | `python -m Common.locator_policy --fail-over 13` | 元素表的**防劣化门禁**：脆弱定位（绝对 xpath / 深层下标）数量只能降不能升。改好一条就把阈值调低一格 |
 | **框架单元测试** | `python tests/run_unit_tests.py --junit Report/unit-tests.xml` | **质量门禁**：不开浏览器、几十秒、零业务副作用，先把"框架自身坏了"这类问题拦下来 |
+| **运行环境自检** | `python run.py --preflight` | 查**这台机器**：Python / selenium / 浏览器 / 驱动版本 / 目录可写。单独成 stage，是为了让 Jenkins 页面上能一眼分清"**环境没搭好**"和"**用例真的挂了**" |
 | **执行冒烟测试** | 拼装命令并以 `sh`/`bat` 执行 | **sh/bat 返回非 0 会让本 stage 自动变红**，这就是"自动判定构建失败"的实现 |
 
 > **为什么把单元测试放在 UI 测试之前**：UI 用例失败时，最常见的心智负担是
 > "到底是框架坏了，还是页面改版了？"。先跑几十秒的单元测试，就能把这两类原因分开 ——
 > 单元测试红了先修框架；单元测试绿而 UI 红了，直接去看页面与环境。
 
+> **为什么还要单独一个「运行环境自检」stage**：单元测试是"不依赖机器状态"的，
+> 而 UI 测试强依赖浏览器和驱动。把环境检查单独拎出来，值班的人看到红的 stage 名字
+> 就知道该找谁 —— 环境问题的处理人和用例问题往往不是同一个人。
+>
+> 新节点第一次接入时，建议**先手动**跑一次把环境验通：
+> ```bash
+> python run.py --preflight          # 有致命问题时退出码 2
+> ```
+> 它不会打开浏览器，所以哪怕环境坏得彻底也能给出结论。
+
 实际执行的命令形如：
 
 ```bash
-# ③ 框架单元测试（快，先跑）
+# ③ 代码规范（静态，最快）
+<workspace>/.venv/bin/python -m flake8
+
+# ④ 定位规范门禁（静态）
+<workspace>/.venv/bin/python -m Common.locator_policy --fail-over 13
+
+# ⑤ 框架单元测试
 <workspace>/.venv/bin/python tests/run_unit_tests.py --junit Report/unit-tests.xml
 
-# ④ UI 冒烟测试
+# ⑥ 运行环境自检（不打开浏览器）
+<workspace>/.venv/bin/python run.py --preflight
+
+# ⑦ UI 冒烟测试
 <workspace>/.venv/bin/python run.py --suite smoke --headless \
     --junit Report/junit-results.xml \
     --url http://测试环境/... --tester app-build-123

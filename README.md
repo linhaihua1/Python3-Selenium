@@ -329,6 +329,9 @@ python tests/run_unit_tests.py --junit Report/unit-tests.xml   # 流水线用
 7. **改用户例方法名要同步改 `[ci] smoke_cases`**，否则冒烟集会失配（日志会打印「命中 N/M 条」）。
 8. **生产环境警告**：`config.ini` 默认指向生产环境。跑全量前务必确认，
    流水线请用 `UI_ENVIRONMENT_URL` 指向测试环境。
+   ★ 现在有**环境守卫**兜底：地址是占位符、不在白名单、或"疑似生产 + 本次含写用例"时，
+   `run.py` 会在**打开浏览器之前**直接以退出码 2 中止，并打印一行人话原因。
+   配置在 `config.ini -> [safety]`，实现见 `Common/env_guard.py`。
 9. **「一条用例都没收集到」先看日志，别急着改代码**。四条硬性约束：
    `TestSuites/__init__.py` 不能删；文件名必须以 `test` 开头；文件名只能是
    字母/数字/下划线（`test-login.py` 会被 discover **静默跳过**）；
@@ -339,16 +342,35 @@ python tests/run_unit_tests.py --junit Report/unit-tests.xml   # 流水线用
    [使用文档 7.1](docs/使用文档.md#71-一条用例都没收集到深度排查)。
 10. **中文输出不要依赖终端编码**：入口已把 stdout/stderr 强制为 UTF-8，
    Linux 容器里 locale 为 `C` 时也不会因 `print` 中文而崩。
+11. **★ 浏览器起不来、报 `session not created`、卡很久才抛一屏堆栈** ——
+   九成是环境问题，不是用例问题。先跑 `python run.py --preflight`。
+   典型场景：`PATH` 上有个**旧版 chromedriver**（例如 114），
+   Selenium Manager 下好的匹配版会被它覆盖，于是启动浏览器直接失败。
+   自检 1 秒就能指名"把哪个文件改名或删掉"。
+   `run.py` 每次执行前也会自动自检一次，所以这类问题不会再以"用例失败"的面貌出现。
+12. **写用例时别忘了标作用域**。没标的用例一律算**写用例**（刻意的失败安全设计）：
+   只读用例请加 `scope = 'readonly'` 类属性或 `@readonly` 装饰器，
+   这样 `[testcase] mode = readonly` 时它们才会被保留。
+   详见 [使用文档](docs/使用文档.md) 与 `Common/testcase_meta.py`。
 
 ---
 
 ## 十一、已知限制与改进方向
 
-- 用例之间无数据隔离，任一步失败会导致后续用例连续失败 —— 排错时优先修**最早失败**的那条。
+- **用例之间的数据治理**：`Common/dataGovernance.py` 提供 `IsolatedTestCase`
+  （造数-清数 + 并行下唯一数据标记），新写写操作用例建议继承它；
+  已有的 6 条串行业务流尚未改造，任一步失败仍会导致后续用例连续失败 ——
+  排错时优先修**最早失败**的那条。
 - 断言以页面标题为主，业务数据（上传成功、查询命中数、报送状态）未被断言；
-  `BasePage.get_text()` 已提供能力，可逐步补强。
-- 元素定位以绝对 xpath 为主，建议逐条替换为相对/语义定位（按文本、按属性）。
-- 因用例强串行依赖，**不适合**做单用例失败重试；若将来用例解耦可引入。
+  `BasePage.get_text()` / `get_value()` 已提供能力，可逐步补强。
+- 元素定位仍以 xpath 为主：当前实测 21 条里 13 条偏脆弱（含 2 条绝对路径）。
+  已建立**防劣化门禁**（`tests/test_locator_policy.py` 把脆弱度冻结成基线，
+  新增脆弱定位会让测试红），并可在 CI 用
+  `python -m Common.locator_policy --fail-over 13` 卡口。建议逐条替换为
+  id / 可见文字 / 属性定位。
+- 因用例强串行依赖，**不适合**做单用例失败重试；`Common/dependency.py`
+  提供了失败级联跳过（前置挂了后继直接 skip，不再连坐报错），
+  彻底解耦后即可引入失败重试。
 - `config.ini` 本地为明文，建议本机也不要放生产账号；CI 上统一用 Jenkins 凭据。
-- 可删的遗留文件（全工程零引用）：`Common/HTMLTestRunnerNew.py`、
-  `PageObject/homePage.py`、`TestSuites/testHome.py`。
+- 历史遗留文件已清理：`Common/HTMLTestRunnerNew.py`、`Common/configTest.py`、
+  `Common/logTest.py`、`PageObject/homePage.py`、`TestSuites/testHome.py`。

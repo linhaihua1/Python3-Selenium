@@ -561,6 +561,37 @@ class TestOpenBrowser(_PageTestCase):
             self.make_page().open_browser(browser='edge')
         self.assertEqual(factory.edge_calls, 1)
 
+    def test_配置grid_url时走远程Remote而非本地浏览器(self):
+        """Selenium Grid：配了 Hub 地址就把驱动交给远程，不调用本地 Chrome。"""
+        ini = ('[environment]\nurl = http://x.local\nbrowser = chrome\n'
+               '[ci]\ngrid_url = http://127.0.0.1:4444\n')
+        factory = self._factory()
+        with patch_config(ini_text=ini):
+            page = BasePage(driver=FakeDriver())
+            with mock.patch.object(base_page, 'webdriver', factory):
+                page.open_browser()
+        self.assertEqual(factory.remote_calls, 1)
+        self.assertEqual(factory.remote_urls, ['http://127.0.0.1:4444'])
+        self.assertEqual(factory.chrome_calls, 0, '走 Grid 时不应再调用本地 Chrome')
+
+    def test_环境变量UI_CI_GRID_URL也能触发远程执行(self):
+        """命令行 --grid 写到 UI_CI_GRID_URL，应同样触发远程驱动。"""
+        factory = self._factory()
+        with patch_config():
+            with mock.patch.dict(os.environ, {'UI_CI_GRID_URL': 'http://hub:4444'}):
+                with mock.patch.object(base_page, 'webdriver', factory):
+                    self.make_page().open_browser(browser='firefox')
+        self.assertEqual(factory.remote_calls, 1)
+        self.assertEqual(factory.remote_urls, ['http://hub:4444'])
+
+    def test_未配置grid时仍走本地浏览器(self):
+        factory = self._factory()
+        with patch_config():
+            with mock.patch.object(base_page, 'webdriver', factory):
+                self.make_page().open_browser(browser='chrome')
+        self.assertEqual(factory.chrome_calls, 1)
+        self.assertEqual(factory.remote_calls, 0)
+
     def test_浏览器类型大小写不敏感(self):
         factory = self._factory()
         with mock.patch.object(base_page, 'webdriver', factory):

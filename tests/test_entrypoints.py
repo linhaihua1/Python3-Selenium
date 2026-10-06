@@ -138,6 +138,12 @@ class TestRuntimeOverrides(_EntryTestCase):
             self.module.parse_args(['--headless', '--browser', 'chrome']))
         self.assertEqual(len(applied), 2)
 
+    def test_grid参数写入环境变量(self):
+        args = self.module.parse_args(['--grid', 'http://127.0.0.1:4444'])
+        applied = self.module.apply_runtime_overrides(args)
+        self.assertEqual(os.environ['UI_CI_GRID_URL'], 'http://127.0.0.1:4444')
+        self.assertTrue(any('grid=' in a for a in applied))
+
     def test_覆盖后真实生效到Config(self):
         """这是链路闭环的关键：参数最终要能被 Common/config.py 读到。"""
         from Common.config import Config

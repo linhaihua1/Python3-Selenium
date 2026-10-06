@@ -260,5 +260,38 @@ class TestBusinessHelpers(_EnvGuard):
             self.assertEqual(emails, ['zhangsan@example.com', 'lisi@example.com'])
 
 
+class TestSectionHeaderFootgun(_EnvGuard):
+    """★ 段头与键写在同一行会被**静默丢弃** —— 实测踩过的配置陷阱。
+
+    ConfigParser 的段匹配正则 r"\\[(?P<header>.+)\\]" **没有整行锚定**，
+    所以 `[ci]preflight = false` 这一整行会被当成"段头 [ci]"，后半句直接消失。
+    既不报错、也不生效，排查时非常费劲（曾因此让一个单测莫名去检查跑测机器的驱动版本）。
+
+    这组测试的作用是把"坑"固定下来：一旦将来有人把它改成"整行严格匹配"，
+    这里会立刻变红，提醒同步修改 config.ini.example 里的格式说明。
+    """
+
+    def test_段头后面的内容被静默丢弃(self):
+        ini = '[environment]\nurl = http://a.local/x\n\n[ci]preflight = false\nsmoke_cases = a,b\n'
+        with patch_config(ini_text=ini):
+            # 段头被识别成 [ci]，但键没有生效 —— 回落到传入的默认值
+            self.assertTrue(Config.get_bool('ci', 'preflight', True),
+                            'preflight 并未被设置，应当回落到默认值 True')
+            self.assertEqual(Config.get('ci', 'smoke_cases', ''), 'a,b',
+                             '紧跟在后面的键仍然在 [ci] 段内，正常生效')
+
+    def test_分行写才生效(self):
+        ini = '[environment]\nurl = http://a.local/x\n\n[ci]\npreflight = false\nsmoke_cases = a,b\n'
+        with patch_config(ini_text=ini):
+            self.assertFalse(Config.get_bool('ci', 'preflight', True),
+                             '分行写时 preflight 才会被真正读到')
+
+    def test_环境段同样会踩这个坑(self):
+        """[environment]url = xxx 是同一个坑的另一种写法，地址会变成没配。"""
+        ini = '[environment]url = http://a.local/x\n\n[ci]\nheadless = false\n'
+        with patch_config(ini_text=ini):
+            self.assertEqual(Config.get('environment', 'url', ''), '')
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

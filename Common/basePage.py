@@ -166,6 +166,10 @@ class BasePage:
 
         log1.info('读取浏览器配置,值为%s，无头模式=%s' % (browser, headless))
         log1.info('读取url,值为%s' % url)
+        # Selenium Grid 远程执行：配了 grid_url 就把驱动交给远程 Hub，
+        # 由 Hub 决定在哪个节点、用哪个浏览器跑。对应 config.ini [ci] grid_url
+        # 或环境变量 UI_CI_GRID_URL（命令行 --grid 会写到这里）。
+        grid_url = config.get('ci', 'grid_url', '')
         try:
             if browser == 'chrome':
                 options = webdriver.ChromeOptions()
@@ -191,14 +195,36 @@ class BasePage:
                     log1.info('指定 Chrome 可执行文件：%s' % chrome_binary)
                 # 注意：Selenium 4 自带 Selenium Manager，会自动下载匹配的 chromedriver，
                 # 不需要再手动放 driver 文件（旧工程根目录的 geckodriver.log 就是这么来的）
-                self.driver = webdriver.Chrome(options=options)
-                log1.info('打开chrome浏览器（无头=%s）' % headless)
+                if grid_url:
+                    self.driver = webdriver.Remote(command_executor=grid_url,
+                                                   options=options)
+                    log1.info('通过 Selenium Grid 打开 chrome（无头=%s，Hub=%s）'
+                              % (headless, grid_url))
+                else:
+                    self.driver = webdriver.Chrome(options=options)
+                    log1.info('打开chrome浏览器（无头=%s）' % headless)
             elif browser == 'firefox':
-                self.driver = webdriver.Firefox()
-                log1.info('打开firefox浏览器')
+                options = webdriver.FirefoxOptions()
+                if headless:
+                    options.add_argument('-headless')
+                if grid_url:
+                    self.driver = webdriver.Remote(command_executor=grid_url,
+                                                   options=options)
+                    log1.info('通过 Selenium Grid 打开 firefox（Hub=%s）' % grid_url)
+                else:
+                    self.driver = webdriver.Firefox(options=options)
+                    log1.info('打开firefox浏览器')
             elif browser == 'edge':
-                self.driver = webdriver.Edge()
-                log1.info('打开edge浏览器')
+                options = webdriver.EdgeOptions()
+                if headless:
+                    options.add_argument('--headless=new')
+                if grid_url:
+                    self.driver = webdriver.Remote(command_executor=grid_url,
+                                                   options=options)
+                    log1.info('通过 Selenium Grid 打开 edge（Hub=%s）' % grid_url)
+                else:
+                    self.driver = webdriver.Edge(options=options)
+                    log1.info('打开edge浏览器')
             else:
                 # 配置写错时立刻失败，比后面每个元素都定位不到好排查得多
                 raise ValueError('浏览器配置有误，应为 chrome / firefox / edge')

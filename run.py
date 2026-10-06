@@ -122,6 +122,11 @@ def parse_args(argv=None):
     parser.add_argument('--browser', choices=('chrome', 'firefox', 'edge'),
                         help='浏览器类型，覆盖 config.ini [environment] browser')
     parser.add_argument('--url', help='被测地址，覆盖 config.ini [environment] url')
+    # Selenium Grid 远程执行：把驱动交给远程 Hub（如 http://hub:4444）。
+    # 不传则本机开浏览器（与历史行为一致）。
+    parser.add_argument('--grid', dest='grid',
+                        help='Selenium Grid Hub 地址（如 http://127.0.0.1:4444），'
+                             '传入则远程执行；对应 [ci] grid_url / UI_CI_GRID_URL')
 
     # ---- 多系统切换 ----
     # 一套框架管理多个被测系统：在 config.ini 里为每个系统建一个 [system_名称] 段，
@@ -188,6 +193,10 @@ def apply_runtime_overrides(args):
     if args.url:
         os.environ['UI_ENVIRONMENT_URL'] = args.url
         applied.append('url=%s' % args.url)
+    # Selenium Grid Hub：对应 UI_CI_GRID_URL -> config.ini [ci] grid_url
+    if getattr(args, 'grid', None):
+        os.environ['UI_CI_GRID_URL'] = args.grid
+        applied.append('grid=%s' % args.grid)
 
     if applied:
         log1.info('命令行覆盖配置：%s' % ', '.join(applied))

@@ -545,7 +545,12 @@ class FakeWebDriverFactory:
         self.chrome_calls = 0
         self.firefox_calls = 0
         self.edge_calls = 0
+        self.remote_calls = 0
+        self.remote_urls = []
+        self.remote_options = None
         self.ChromeOptions = FakeChromeOptions
+        self.FirefoxOptions = FakeChromeOptions   # 假实现共用即可，能记录参数
+        self.EdgeOptions = FakeChromeOptions
 
     def Chrome(self, options=None):            # noqa: N802 - 对齐 selenium 的命名
         self.chrome_calls += 1
@@ -560,6 +565,13 @@ class FakeWebDriverFactory:
 
     def Edge(self, *args, **kwargs):           # noqa: N802
         self.edge_calls += 1
+        return self.driver
+
+    def Remote(self, command_executor=None, options=None, **kwargs):  # noqa: N802
+        """模拟 Selenium Grid 远程驱动：记录 Hub 地址与 options，返回假 driver。"""
+        self.remote_calls += 1
+        self.remote_urls.append(command_executor)
+        self.remote_options = options
         return self.driver
 
 
