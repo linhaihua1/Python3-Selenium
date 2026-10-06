@@ -263,6 +263,32 @@ def apply_system(system_name):
     return apply_profile(system_name, kind='system')
 
 
+#: 被视为「生产/准生产」的环境档名。这些档位默认强制只读，写用例一律不许跑。
+#: 之所以单独列名字（而不是只靠 url 关键字猜）：生产环境的地址未必带 prod 字样，
+#: 用档位名做一层「代码级」硬保险，比纯靠正则更可靠。
+PROD_TIER_NAMES = ('prod', 'production', 'online', 'release')
+
+
+def enforce_prod_safety(env_name):
+    """对生产/准生产档强制只读：写用例不允许在生产执行。
+
+    实现为设置环境变量（走与命令行相同的覆盖链路）：
+        UI_TESTCASE_MODE=readonly   —— 只收集只读用例（见 Common/testcase_meta.py）
+        UI_SAFETY_ALLOW_WRITE=false —— 即便绕过了收集，环境守卫也会再次拦截（双保险）
+
+    :param env_name: --env 指定的档位名（None/空表示无档位，不处理）
+    :return: 是否触发了生产安全强制（True 表示已强制）
+    """
+    name = (env_name or '').strip().lower()
+    if not name or name not in PROD_TIER_NAMES:
+        return False
+    os.environ['UI_TESTCASE_MODE'] = 'readonly'
+    os.environ['UI_SAFETY_ALLOW_WRITE'] = 'false'
+    log1.warning('生产安全守卫：[%s] 档已强制只读模式（仅跑只读用例、禁止写操作），'
+                 '如需写操作请改用测试/预发环境' % env_name)
+    return True
+
+
 def print_conclusion(summary):
     """打印执行结论块，让流水线日志一眼就能看清结果。
 
@@ -305,6 +331,8 @@ if __name__ == '__main__':
     #    （同一个产品在不同环境地址不同），所以 env 放后面。
     system_pattern = apply_system(args.system)
     env_pattern = apply_profile(args.env, kind='env')
+    # 生产档安全强制：prod 等档位一律只读，写用例在生产永不执行（双保险）
+    enforce_prod_safety(args.env)
     # 用例集优先级：命令行 --pattern > 环境档 pattern > 系统档 pattern > 默认 test*.py
     pattern = args.pattern if args.pattern != 'test*.py' else (
         env_pattern or system_pattern or args.pattern)

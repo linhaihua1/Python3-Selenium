@@ -36,7 +36,7 @@ import os
 
 from Common import runner
 from Common.config import Config
-from Common.dir_config import base_dir, testcases_dir
+from Common.dir_config import testcases_dir
 from Common.log import log1
 
 

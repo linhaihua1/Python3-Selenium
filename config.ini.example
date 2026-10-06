@@ -84,8 +84,22 @@ url = http://测试环境地址/sso-portal/#/?redirect=/launch
 headless = true
 mode = readonly
 
+# 开发环境：开发者本地联调用，通常有界面、不限读写（自己造的数据自己清理）
+# [env_dev]
+# url = http://开发环境地址/sso-portal/#/?redirect=/launch
+# headless = false
+# mode = all
+
+# 预发环境：上线前的最后一道演练。地址接近生产，默认仍只读；
+# 确需验证写流程时，单独把 mode 改成 all 并显式 allow_write = true。
+# [env_staging]
+# url = http://预发环境地址/sso-portal/#/?redirect=/launch
+# headless = true
+# mode = readonly
+
 # 生产环境的配置档。默认注释掉 —— 需要时再取消注释，避免"手滑 --env prod"。
 # 生产环境**必须**保持 mode = readonly，写用例永远不要在生产跑。
+# （代码层也做了硬保险：--env prod 会被 run.py 强制只读，见 enforce_prod_safety）
 # [env_prod]
 # url = http://生产环境地址/sso-portal/#/?redirect=/launch
 # headless = true

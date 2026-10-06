@@ -112,7 +112,7 @@ Jenkins 直接用它判定构建成败。详见 [CI-CD 接入指南](docs/CI-CD�
 ├── Common/                     公共层
 │   ├── basePage.py             基类：浏览器、定位、交互、上传、截图（唯一直接调 Selenium）
 │   ├── elementPage.py          元素表：全工程 xpath 集中地
-│   ├── runner.py               执行器：收集用例 → 执行 → 出 HTML 报告 + JUnit XML
+│   ├── runner.py               执行器：收集用例 → [三道闸门] → 执行 → HTML 报告 + JUnit XML
 │   ├── config.py               config.ini 读写 + UI_* 环境变量覆盖
 │   ├── configOverWriter.py     定制 ConfigParser（保留键大小写 + 关闭 % 插值）
 │   ├── log.py                  日志：All_Logs 全量 + Error_Logs 仅错误 + 控制台
@@ -121,28 +121,40 @@ Jenkins 直接用它判定构建成败。详见 [CI-CD 接入指南](docs/CI-CD�
 │   ├── junitReport.py          JUnit XML 输出（给 Jenkins 解析）
 │   ├── ci.py                   CI 环境识别与构建元信息
 │   ├── HTMLTestReportCN.py     中文版 HTML 报告模板（第三方）
-│   ├── HTMLTestRunnerNew.py    英文版旧模板（第三方遗留，未被引用）
-│   ├── configTest.py / logTest.py   手工验证脚本（可跳过）
+│   ├── testcase_meta.py        ★ 用例作用域标记（只读 / 写操作），闸门①的依据
+│   ├── env_guard.py            ★ 环境守卫：拦住"误连生产"，闸门②
+│   ├── preflight.py            ★ 运行环境自检：浏览器 / 驱动版本 / 目录可写，闸门③
+│   ├── failureCapture.py       ★ 失败自动取证：截图 + 页面源码
+│   ├── driverRegistry.py       浏览器实例登记处（取证用）
+│   ├── locator_policy.py       元素定位规范检查（可在 CI 当门禁）
+│   ├── dataGovernance.py       测试数据治理：造数-清数、并行下唯一数据标记
+│   ├── dataDriver.py           数据驱动：CSV / JSON / Excel
+│   ├── dependency.py           用例依赖声明 + 失败级联跳过
+│   ├── parallelRunner.py       多进程并行执行（按文件分片）
+│   ├── notifier.py             结果推送到钉钉 / 企业微信
+│   └── getcwd.py               返回工程根目录
 ├── PageObject/                 页面对象层
 │   ├── loginPage.py            门户登录 + 素材库操作（在用）
-│   └── homePage.py             工作台（空壳占位）
+│   └── genericPage.py          配置驱动的通用页面对象（接新系统用）
 ├── TestSuites/                 用例层（UI 用例，会被 run.py 执行）
 │   ├── testLogin.py            主用例集（6 条串行业务用例）
-│   └── testHome.py             空占位模块
+│   └── testMaterialCheck.py    素材库只读校验（3 条，标了 readonly）
 ├── tests/                      框架单元测试（不开浏览器、零业务副作用）
 │   ├── helpers.py              测试基座：假 driver、临时目录隔离、沙盒
 │   ├── samples.py              样例用例类（故意失败/出错等，不参与收集）
 │   ├── run_unit_tests.py       一键入口：python tests/run_unit_tests.py
-│   └── test_*.py               15 个模块的测试（含测试基座自检）
-├── docs/                       使用文档 + CI/CD 接入指南
+│   └── test_*.py               各模块的测试（含测试基座自检）
+├── docs/                       使用文档 + CI/CD 接入指南 + 企业级适用性评估
 ├── Logs/  img/  Report/        运行产物（已 gitignore）
+│     └── Report/artifacts/日期/  失败自动取证：截图 + 页面源码
 ├── config.ini                  本地配置（含账号密码，已 gitignore）
 ├── config.ini.example          配置模板（入库）
 ├── run.py / entrance.py        入口（主 / 备用）
-├── getcwd.py                   返回工程根目录
 ├── Jenkinsfile                 Jenkins 声明式流水线
 ├── Dockerfile                  容器化运行环境（Chromium + 中文字体）
-├── requirements.txt            依赖清单
+├── requirements.txt            运行依赖（只需要 selenium）
+├── requirements-dev.txt        开发依赖（flake8，跑测试不需要）
+├── .flake8                     代码规范规则（CI 门禁用）
 └── .gitignore / .dockerignore  忽略规则
 ```
 
@@ -182,17 +194,28 @@ python run.py --junit none                         # 不生成 JUnit XML
 python run.py --mail                               # 跑完发邮件
 python run.py --notify                             # 跑完推送到钉钉/企业微信群
 python run.py --system erp                         # 切换到 config.ini 的 [system_erp] 系统
+python run.py --env test                           # ★ 切到 config.ini 的 [env_test] 环境档
 python run.py --workers 4                          # 4 进程并行执行（按文件分片），用例多时提速
+
+# ---- 排查环境问题（不跑用例，不打开浏览器）----
+python run.py --preflight                          # 体检这台机器能不能跑 UI 自动化
+python -m Common.preflight --quiet                  # 等价写法，只列出有问题的项
 
 # ---- 其他 ----
 python entrance.py                                 # 备用入口（党建云主题报告）
-python -m Common.logTest                           # 单独验证日志
 python -m Common.sentMail                          # 单独验证发信
 python -m Common.ci                                # 查看当前 CI 上下文
+python -m Common.locator_policy --issues           # 看元素表里哪些定位很脆弱
 python run.py --help                               # 全部参数
 ```
 
 **参数优先级**：`命令行 / 环境变量` > `config.ini` > `代码默认值`。
+
+> **被测系统 vs 运行环境，别搞混**
+> - `--system erp` 换的是**产品**（账号、用例集都不同）→ 读 `[system_erp]`
+> - `--env test` 换的是**环境**（同一个产品，地址/能不能写不同）→ 读 `[env_test]`
+>
+> 两者都只是把配置翻译成 `UI_*` 环境变量，风格完全一致；换环境不需要动任何用例代码。
 
 ---
 

@@ -2,7 +2,6 @@
 """单元测试：并行执行能力（Common/parallelRunner + runner._load_modules/build_suite modules 参数）"""
 
 import os
-import tempfile
 import unittest
 
 from tests.helpers import patch_config, patch_dirs

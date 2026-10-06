@@ -147,6 +147,31 @@ class TestRuntimeOverrides(_EntryTestCase):
             self.assertEqual(Config.get('environment', 'url'), 'http://override.local')
 
 
+class TestProdSafety(_EntryTestCase):
+    """生产/准生产档的安全强制：写用例永不允许在生产执行。"""
+
+    MODULE_NAME = 'run_entry'
+    MODULE_FILE = RUN_PY
+
+    def test_prod档强制只读(self):
+        triggered = self.module.enforce_prod_safety('prod')
+        self.assertTrue(triggered)
+        self.assertEqual(os.environ.get('UI_TESTCASE_MODE'), 'readonly')
+        self.assertEqual(os.environ.get('UI_SAFETY_ALLOW_WRITE'), 'false')
+
+    def test_多个生产别名均触发(self):
+        for name in ('PROD', 'production', 'online', 'release'):
+            os.environ.pop('UI_TESTCASE_MODE', None)
+            triggered = self.module.enforce_prod_safety(name)
+            self.assertTrue(triggered, name)
+            self.assertEqual(os.environ.get('UI_TESTCASE_MODE'), 'readonly')
+
+    def test_非生产档不触发(self):
+        for name in (None, '', 'test', 'dev', 'staging'):
+            self.assertFalse(self.module.enforce_prod_safety(name))
+        self.assertNotIn('UI_TESTCASE_MODE', os.environ)
+
+
 class TestConclusion(_EntryTestCase):
     """执行结论块的文案与退出码语义一致。"""
 

@@ -4,8 +4,9 @@
 import unittest
 
 from Common import dependency
-from Common.dependency import (depends_on, deps_of, failed_dependencies,
-                              guard, reset, DependencyRecorderMixin)
+from Common.dependency import (
+    DependencyRecorderMixin, depends_on, deps_of, failed_dependencies, guard, reset,
+)
 
 
 class _RecResult(DependencyRecorderMixin, unittest.TestResult):
@@ -87,6 +88,7 @@ class TestCascadeSkip(unittest.TestCase):
         # test_b 在 test_a 之前被收集到（字母序 test_a < test_b，正常）；
         # 但如果手工乱序让依赖尚未执行，guard 不应误判为失败
         dependency.record('test_a', 'pass')   # 已登记成功
+
         class C(unittest.TestCase):
             @depends_on('test_a')
             def test_b(self): pass
