@@ -52,6 +52,7 @@ import xml.etree.ElementTree as ET
 # 复用 HTML 报告器的结果类：JUnitResult 在它的基础上扩展，
 # 这样 HTMLTestRunner 可以直接拿本类当 resultclass 使用。
 from Common.HTMLTestReportCN import _TestResult
+from Common.dependency import DependencyRecorderMixin as _DependencyRecorderMixin
 from Common.dir_config import ensure_dir
 from Common.log import log1
 
@@ -82,8 +83,11 @@ def _case_meta(test):
     return classname, name
 
 
-class JUnitResult(_TestResult):
+class JUnitResult(_DependencyRecorderMixin, _TestResult):
     """测试结果收集器：在 HTML 报告结果的基础上，补上「耗时」与「状态明细」。
+
+    继承 DependencyRecorderMixin：每次用例成功/失败/出错/跳过都会登记到
+    Common.dependency，供「依赖级联跳过」判定使用（见 Common/dependency.py）。
 
     字段 `cases` 是给 junitReport.write_junit_xml() 消费的结构化数据，
     每条形如：

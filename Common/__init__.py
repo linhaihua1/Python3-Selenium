@@ -29,6 +29,7 @@
     failureCapture.py    失败自动取证：截图 + 页面源码（CI 上排查失败靠它）
     driverRegistry.py    浏览器实例登记处（失败取证要从这里拿 driver）
     locator_policy.py    元素定位规范检查（只读源码，可在 CI 当门禁用）
+    dataGovernance.py    测试数据治理：IsolatedTestCase 自动造数-清数、并行下唯一数据标记
     dataDriver.py        数据驱动：从 CSV / JSON / Excel 读测试数据
     notifier.py          结果推送到群机器人（钉钉 / 企业微信 / 自定义 webhook）
     parallelRunner.py    多进程并行执行（按用例文件分片，结果合并成一份）

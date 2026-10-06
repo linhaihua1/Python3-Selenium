@@ -621,6 +621,11 @@ def run(tests_dir=None, pattern='test*.py', title=None, report_name=None,
     # 报告模板要求以二进制流写入，所以用 'wb'
     # with 语句保证异常时文件也能正常关闭（旧版手动 fp.close()，出错会漏关）
     try:
+        # 依赖级联跳过：清空上次结果登记，并用守卫套件包裹（前置失败则后继 skip）
+        from Common import dependency
+        dependency.reset()
+        guarded_suite = dependency.wrap_suite(suite)
+
         with open(report_path, 'wb') as fp:
             runner = HTMLTestRunner(
                 stream=fp,
@@ -630,7 +635,7 @@ def run(tests_dir=None, pattern='test*.py', title=None, report_name=None,
                 # ★ 关键：注入自定义结果类，一次执行同时产出 HTML 与 JUnit XML 两份报告
                 resultclass=JUnitResult,
             )
-            result = runner.run(suite)  # 真正开始跑用例，此处耗时最长
+            result = runner.run(guarded_suite)  # 真正开始跑用例，此处耗时最长
         log1.info('测试执行结束，HTML 报告生成成功')
     except BaseException:
         # 走到这里通常意味着浏览器起不来、地址不通这类环境问题
