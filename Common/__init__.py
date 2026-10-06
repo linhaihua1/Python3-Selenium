@@ -25,9 +25,14 @@
     HTMLTestReportCN.py  中文版 HTML 报告模板（第三方，一般不需要改）
     testcase_meta.py     用例作用域标记：只读 / 写操作（安全守卫与分级执行的基础）
     env_guard.py         环境守卫：防止误连生产环境（地址、白名单、写用例）
+    preflight.py         运行环境自检：Python/selenium/浏览器/驱动版本/目录可写
     failureCapture.py    失败自动取证：截图 + 页面源码（CI 上排查失败靠它）
     driverRegistry.py    浏览器实例登记处（失败取证要从这里拿 driver）
     locator_policy.py    元素定位规范检查（只读源码，可在 CI 当门禁用）
+    dataDriver.py        数据驱动：从 CSV / JSON / Excel 读测试数据
+    notifier.py          结果推送到群机器人（钉钉 / 企业微信 / 自定义 webhook）
+    parallelRunner.py    多进程并行执行（按用例文件分片，结果合并成一份）
+    getcwd.py            工程根目录探测（供日志与截图定位）
 
 【新人阅读顺序建议】
     （本机开发 / 理解业务）
@@ -42,8 +47,9 @@
     Common/ci.py -> Common/junitReport.py，配合根目录 Jenkinsfile 一起看
     完整说明见 docs/使用文档.md 与 docs/CI-CD接入指南.md。
 
-【安全相关的四个模块（企业级的关键，别在重构中丢掉）】
-    testcase_meta.py + env_guard.py  跑之前拦住"误连生产"
+【安全 / 稳定性相关的五个模块（企业级的关键，别在重构中丢掉）】
+    testcase_meta.py + env_guard.py     跑之前拦住"误连生产"
+    preflight.py                        跑之前说清"这台机器到底能不能跑"
     failureCapture.py + driverRegistry.py  跑挂了自动留下现场
 ==========================================================================
 """

@@ -132,6 +132,13 @@ query_keyword = 测试
 # 对应环境变量：UI_TESTCASE_MODE
 mode = all
 
+# 是否在用例结束后自动清理其创建的数据（造数/清数治理，见 Common/dataGovernance.py）。
+#   true   用例 tearDown 时执行已登记的清理（默认，推荐）
+#   false  不清理，保留现场（调试失败原因时临时用）
+# 继承 IsolatedTestCase 的用例才会用到；清理失败只记日志，不影响用例结果。
+# 对应环境变量：UI_TESTCASE_AUTO_CLEANUP
+auto_cleanup = true
+
 
 # --------------------------------------------------------------------------
 # 断言期望值：用例靠校验页面标题判定成功与否。
@@ -236,6 +243,14 @@ extra_chrome_args =
 # 容器镜像（见仓库根 Dockerfile）里 chromium 装在 /usr/bin/chromium，需要显式指定
 # 对应环境变量：UI_CI_CHROME_BINARY
 chrome_binary =
+
+# 运行环境自检：执行用例前先检查 Python / selenium / 浏览器 / 驱动版本 / 目录可写，
+# 有致命问题就中止（退出码 2），不会打开浏览器。
+# 见 Common/preflight.py。单独体检：python run.py --preflight
+# 遇到过的真实故障：PATH 上有个旧版 chromedriver，与 Chrome 版本不匹配，
+# 现象是"卡 60 秒 + 一屏堆栈"，而自检 1 秒就能说清是驱动版本问题。
+# 对应环境变量：UI_CI_PREFLIGHT
+preflight = true
 
 
 # --------------------------------------------------------------------------
