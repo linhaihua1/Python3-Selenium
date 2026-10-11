@@ -654,7 +654,7 @@ class BasePage:
     def switch_other_window(self, handle=None):
         """切换到另一个标签页并返回新窗口的 handle。【在用】
 
-        典型场景：从统一门户点进生产系统，页面在新标签页打开，
+        典型场景：从门户点进业务系统，页面在新标签页打开，
         必须切过去才能继续操作（本工程 test_2select_scxt 就是这么做的）。
 
         :param handle: 当前窗口 handle；不传则自动取当前窗口

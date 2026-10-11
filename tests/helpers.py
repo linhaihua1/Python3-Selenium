@@ -12,7 +12,7 @@
     3. patch_dirs()    —— 把 Logs / img / Report / 用例目录重定向到临时目录。
     4. make_sandbox()  —— 临时沙盒工程（config.ini + 用例包），
        供 runner.run() 的端到端测试使用，测完即弃。
-    5. load_module()   —— 加载工程根目录下的顶层模块（run.py / entrance.py）。
+    5. load_module()   —— 加载工程根目录下的顶层模块（如 run.py）。
 
 【为什么必须隔离】
     工程的 config.ini 里是生产环境地址与真实账号；Logs/img/Report 是真实产物。
@@ -581,7 +581,7 @@ class FakeWebDriverFactory:
 def load_module(name, path):
     """按文件路径加载一个顶层模块并返回（不加入 sys.modules 缓存）。
 
-    用途：测试 run.py / entrance.py 这类不在包里的入口脚本。
+    用途：测试 run.py 这类不在包里的入口脚本。
     它们都有 `if __name__ == '__main__'` 保护，import 不会触发执行。
     """
     import importlib.util

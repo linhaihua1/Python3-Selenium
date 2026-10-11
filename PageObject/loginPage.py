@@ -5,8 +5,18 @@
 ==========================================================================
 
 【一句话说明】
-    把"统一门户登录"和"融媒体素材库"这两个页面的操作，写成人话级别的方法。
+    把"门户登录"和"素材库"这两个页面的操作，写成人话级别的方法。
     用例层只需要调 login()/click_material()/submitted()，不用关心 xpath 长什么样。
+
+【★ 这是一个「示例业务」，不是框架的一部分】
+    本文件的方法名与元素表 Element1 的定位值一样，都绑定在**某一个具体被测系统**上。
+    接入新系统时，本文件与 Common/elementPage.py 一起整体替换即可，
+    框架层（Common/basePage.py 与 PageObject/genericPage.py）一行都不用改。
+
+    ★ 但**不要**把这里的定位值搬去当别的系统的定位 —— 它们对这个系统有效，
+      是因为它就是这个系统的页面。新系统请优先用基类的通用定位能力
+      （按可见文字 / placeholder / 属性），那些不依赖 DOM 层级、抗改版，
+      见 Common/basePage.py 第七节。
 
 【在框架中的位置】
     TestSuites/testLogin.py       用例层：调本类的方法 + 写断言
@@ -18,9 +28,11 @@
     ✅ 本文件只写"做什么"：点哪个按钮、填哪个框、按什么顺序
     ❌ 本文件不写断言（assertEqual 之类）—— 断言是用例层的职责
     ❌ 本文件不出现 xpath 字符串 —— 元素一律从 Element1 取
+    ❌ 本文件不写死任何业务数据（期望标题、查询关键字、表单值）
+       —— 那些只能来自 config.ini，见 Common/config.py 的 get_required
 
-【为什么叫 LoginPage 却包含素材库操作】
-    因为这两个页面属于同一条业务链（登录门户 -> 进生产系统 -> 素材库），
+【为什么本文件同时包含登录与素材库两个页面的操作】
+    因为这两个页面属于同一条业务链（登录门户 -> 进系统 -> 素材库），
     元素和跳转关系紧密，放在一起比拆成三个文件更好维护。
     文件名叫 loginPage 是沿用历史命名。
 ==========================================================================
@@ -33,23 +45,26 @@ from Common.log import log1
 
 
 class LoginPage(BasePage):
-    """统一门户登录与融媒体素材库操作。
+    """示例业务页面对象：门户登录 + 素材库操作。
 
     继承 BasePage 后，self.type / self.click / self.get_img 等方法可直接使用。
     实例化时要把 driver 传进来：
         login_page = LoginPage(driver)
+
+    ★ 换被测系统时本类整体替换，框架层不用动。理由见模块头说明。
     """
 
     # ====================================================================== #
-    # 一、统一门户：登录与跳转
+    # 一、门户：登录与跳转
     # ====================================================================== #
     def login(self, username, password):
-        """在统一门户输入账号密码并点登录。
+        """在门户输入账号密码并点登录。
 
         :param username: 登录账号（来自 config.ini -> [testcase] login_username）
         :param password: 登录密码（来自 config.ini -> [testcase] login_password）
 
-        执行后页面 title 应为 '统一门户'，用例 test_1login 会校验这一点。
+        执行后页面 title 的期望值取自 config.ini -> [assert] title_login，
+        由用例 test_1login 校验。页面对象层不写断言，也不持有期望值。
         """
         self.type(Element1.Username, username)   # 填用户名
         self.type(Element1.Password, password)   # 填密码
@@ -57,7 +72,7 @@ class LoginPage(BasePage):
         self.get_img()                           # 留一张登录后的截图，便于回溯
 
     def click_sign_in(self):
-        """点门户里的「发布系统」进入生产系统。
+        """点门户里的业务系统入口。
 
         注意：这一步会**新开一个浏览器标签页**，
         调用方之后必须 switch_other_window() 切换过去，否则后续操作还在旧标签页上。
@@ -133,7 +148,7 @@ class LoginPage(BasePage):
         self.click(Element1.confirm)                    # 「确定」关闭弹窗
 
     # ====================================================================== #
-    # 四、关键字查询
+    # 四、关键字查询（关键字取自 config.ini -> [testcase] query_keyword）
     # ====================================================================== #
     def query_form_ready(self):
         """自检：素材库查询区的关键控件是否都已渲染出来，返回检查结果。

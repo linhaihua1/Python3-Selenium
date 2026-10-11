@@ -68,7 +68,7 @@
 | # | 问题（接入前） | 改造方案 | 涉及文件 |
 |---|---|---|---|
 | 1 | Jenkins 节点无桌面，Chrome 起不来 | 新增无头模式：`[ci] headless` + `UI_CI_HEADLESS`，无头下自动附加 `--headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --window-size=1920,1080`，并把 `maximize_window()` 换成固定尺寸 | `Common/basePage.py`、`config.ini` |
-| 2 | 脚本永远返回 0，Jenkins 无法判定失败 | `runner.run()` 返回 `exit_code`（0 通过 / 1 用例失败 / 2 环境异常），`run.py` 末尾 `sys.exit()` | `Common/runner.py`、`run.py`、`entrance.py` |
+| 2 | 脚本永远返回 0，Jenkins 无法判定失败 | `runner.run()` 返回 `exit_code`（0 通过 / 1 用例失败 / 2 环境异常），`run.py` 末尾 `sys.exit()` | `Common/runner.py`、`run.py` |
 | 3 | 只有 HTML 报告，Jenkins 无法展示用例明细与趋势 | 新增 JUnit XML 输出，**测试只跑一遍**即同时产出 HTML + XML（通过 `resultclass` 注入结果收集类） | `Common/junitReport.py`、`Common/HTMLTestReportCN.py` |
 | 4 | 账号密码明文在 `config.ini`，无法入库 | `Config.get()` 支持 `UI_<段>_<键>` 环境变量覆盖，Jenkins 用凭据注入；新增 `.gitignore` 与 `config.ini.example` | `Common/config.py`、`.gitignore`、`config.ini.example` |
 | 5 | 全量用例会真实上传/报送，不敢每次构建都跑 | 新增冒烟子集 `--suite smoke`，由 `[ci] smoke_cases` 配置，默认只跑前 3 条无副作用用例 | `Common/runner.py`、`config.ini` |

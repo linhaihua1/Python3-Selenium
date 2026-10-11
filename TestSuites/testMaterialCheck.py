@@ -23,6 +23,13 @@
       用例之间有先后依赖（先登录才能上传）-> 抄 testLogin.py（共享浏览器）
       用例各自独立、只做校验              -> 抄本文件（自带浏览器）
 
+【★ 本文件的业务数据也全部来自配置】
+    与 TestSuites/testLogin.py 一样，本文件不含任何具体系统的字面量：
+    断言期望标题取自 config.ini -> [assert] title_material，
+    查询关键字取自 config.ini -> [testcase] query_keyword，
+    缺失时由 Config.get_required() 明确报错（见本模块顶部注释与
+    Common/config.py 的 get_required）。换系统只改配置、不改代码。
+
 【为什么这条用例安全】
     全程只用 get_element / get_value 读页面，以及往查询框里填字，
     既不点「查 询」（不发请求）、也不点「上 传」「报 送」（不写数据）。
@@ -30,7 +37,7 @@
 
 【执行顺序】
     方法名 test_N 前缀决定顺序（unittest 按方法名字母序执行）：
-        test_1ready     前置链路是否走通（已进入素材库）
+        test_1ready     前置链路是否走通（已进入目标页）
         test_2controls  查询区关键控件是否齐全
         test_3keyword   输入能否生效、重置能否清空
 
@@ -72,20 +79,26 @@ class TestMaterialCheck(unittest.TestCase):
     # 类属性：整个类共用的浏览器与页面对象（在 setUpClass 里赋值）
     driver = None
 
-    # 断言期望值的兜底默认值。
-    # 真正生效的值在 setUpClass 里从 config.ini -> [assert] 读取，
-    # 换系统时只改配置、不改代码；这里只是"配置缺失时的安全回退"。
-    title_material = '素材库 - 云媒资系统'
+    # ---------------------------------------------------------------------- #
+    # 断言期望值在 setUpClass 里从 config.ini -> [assert] 读取。
+    # ★ 这里刻意**不写代码兜底默认值** —— 兜底里放的是上一个系统的标题，
+    #   换系统后忘了改配置就会拿它去比对，报出"期望[旧标题] 实际[新标题]"
+    #   这种掩盖真实原因的失败。缺失时直接报错并说明该改哪一段配置。
+    # ---------------------------------------------------------------------- #
 
     # ---------------------------------------------------------------------- #
     # 前置 / 后置：整个类只执行一次
     # ---------------------------------------------------------------------- #
     @classmethod
     def setUpClass(cls):
-        """类级前置：读配置 -> 开浏览器 -> 走完进入素材库的前置链路。"""
+        """类级前置：读配置 -> 开浏览器 -> 走完进入业务页的前置链路。
+
+        :raise ValueError: 必填配置缺失时抛出（此时浏览器还没打开，无副作用）。
+        """
         # ---- 1. 从配置读参数（绝不硬编码账号、地址、期望标题）----
         cls.username, cls.password = Config.get_account()
-        cls.title_material = Config.get('assert', 'title_material', cls.title_material)
+        cls.title_material = Config.get_assert_value(
+            'title_material', '进入素材库/业务页后的标题')
 
         # ---- 2. 打开浏览器 ----
         cls.base = BasePage()
@@ -94,14 +107,14 @@ class TestMaterialCheck(unittest.TestCase):
         # ---- 3. 建页面对象 ----
         cls.page = LoginPage(cls.driver)
 
-        # ---- 4. 前置链路：登录 -> 进生产系统 -> 切标签页 -> 进素材库 ----
+        # ---- 4. 前置链路：登录 -> 进业务系统 -> 切标签页 -> 进业务页 ----
         # 这四步在 testLogin.py 里是 3 条独立用例（为了演示业务流程），
         # 在独立用例里则属于"前置条件"，放在 setUpClass 走一次就好。
         cls.page.login(cls.username, cls.password)   # 登录门户
-        cls.page.click_sign_in()                     # 点「发布系统」，会新开标签页
+        cls.page.click_sign_in()                     # 点入口，会新开标签页
         cls.page.switch_other_window()               # ★ 必须切到新标签页，否则后面全部定位失败
         cls.page.my_sleep(2)                         # 等新页面首屏渲染
-        cls.page.click_material()                    # 左侧菜单：内容管理 -> 素材库
+        cls.page.click_material()                    # 左侧菜单：进入素材库
         cls.page.my_sleep(2)
 
     @classmethod
@@ -162,11 +175,13 @@ class TestMaterialCheck(unittest.TestCase):
         ★ 这一条是本例的重点：**"没报错"不等于"生效了"**。
         只有把值读回来比对过，才算真的验证过。
         读值用 get_value()（读控件 value），不是 get_text()（读显示文字）。
+
+        关键字取自 config.ini -> [testcase] query_keyword（必填）。
         """
         case_name = '关键字输入与重置'
         log1.info('执行测试用例：%s' % case_name)
 
-        keyword = Config.get('testcase', 'query_keyword', '测试')
+        keyword = Config.get_form_field('query_keyword', '素材查询关键字')
 
         # ---- 步骤 1：填值，然后读回来比对 ----
         self.page.fill_keyword(keyword)

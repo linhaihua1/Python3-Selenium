@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-单元测试：run.py / entrance.py（命令行入口）
+单元测试：run.py（命令行入口）
 
 入口文件看着简单，却是流水线接入点，一旦参数或退出码出问题，CI 全盘失效。
 这里验证：
     - argparse 默认值与互斥开关（--headless / --no-headless）
     - 参数 -> 环境变量的覆盖链路（工程只有"环境变量 > 配置 > 默认值"一条链路）
     - 执行结论块的三种文案（与退出码语义一致）
-    - 两个入口都有 __main__ 保护，被 import 时不会误跑测试
+    - 工程只有一个入口，历史遗留的 entrance.py（党建云专用）已删除
     - 退出码常量与 runner 保持一致
 
 ★ 不真正执行测试：只验证解析与翻译逻辑。
@@ -23,7 +23,6 @@ from tests.helpers import load_module, patch_config
 from Common import runner
 
 RUN_PY = os.path.join('run.py')
-ENTRANCE_PY = os.path.join('entrance.py')
 
 
 class _EntryTestCase(unittest.TestCase):
@@ -244,46 +243,46 @@ class TestMainEntry(_EntryTestCase):
                       '必须把退出码交给操作系统，否则 CI 无法判定构建成败')
 
 
-class TestEntrance(_EntryTestCase):
-    """entrance.py 备用入口。"""
+class TestEntrance(unittest.TestCase):
+    """工程只保留一个通用入口 run.py。
 
-    MODULE_NAME = 'entrance_entry'
-    MODULE_FILE = ENTRANCE_PY
+    历史上有第二个入口 entrance.py —— 它是给某个具体业务系统（党建云）
+    开的专用入口，报告标题写死在代码里。换系统后它既跑不对、也误导人，
+    已彻底删除：
 
-    def test_标题常量存在(self):
-        self.assertIn('党建云', self.module.DANGJIAN_TITLE)
+        python run.py --title 党建云xxx --filename 党建云xxx.html   # 现在这样就行
+    """
 
-    def test_导入时不执行测试(self):
-        """加载模块本身不应触发任何测试执行（靠 __main__ 保护）。"""
-        with mock.patch.object(self.module.runner, 'run') as fake_run:
-            self.assertFalse(fake_run.called)
-
-    def test_源码有main保护并调用runner(self):
+    def test_旧入口已删除(self):
         from tests.helpers import BASE_DIR
-        with open(os.path.join(BASE_DIR, 'entrance.py'), encoding='utf-8') as fp:
-            source = fp.read()
-        self.assertIn("if __name__ == '__main__':", source)
-        self.assertIn('runner.run(', source)
-        self.assertIn('DANGJIAN_TITLE', source)
-        self.assertIn('sys.exit(summary', source)
+        self.assertFalse(
+            os.path.isfile(os.path.join(BASE_DIR, 'entrance.py')),
+            'entrance.py 是业务专用的历史入口，已删除；'
+            '需要自定义报告名请用 run.py --title/--filename',
+        )
+
+    def test_入口文件集合固定(self):
+        from tests.helpers import BASE_DIR
+        for name in ('run.py', 'getcwd.py'):
+            self.assertTrue(os.path.isfile(os.path.join(BASE_DIR, name)),
+                            '缺少必需文件：%s' % name)
 
 
 class TestEntryConsistency(unittest.TestCase):
-    """两个入口与执行器的约定一致。"""
+    """入口与执行器的约定一致。"""
 
     def test_入口文件存在于工程根(self):
         from tests.helpers import BASE_DIR
-        for name in ('run.py', 'entrance.py', 'getcwd.py'):
+        for name in ('run.py', 'getcwd.py'):
             self.assertTrue(os.path.isfile(os.path.join(BASE_DIR, name)))
 
     def test_退出码由runner统一定义(self):
         """入口不应自己发明退出码，避免 CI 判定口径不一致。"""
         from tests.helpers import BASE_DIR
-        for name in ('run.py', 'entrance.py'):
-            with open(os.path.join(BASE_DIR, name), encoding='utf-8') as fp:
-                source = fp.read()
-            self.assertIn('exit_code', source)
-            self.assertNotIn('sys.exit(1)', source, '不要硬编码退出码')
+        with open(os.path.join(BASE_DIR, 'run.py'), encoding='utf-8') as fp:
+            source = fp.read()
+        self.assertIn('exit_code', source)
+        self.assertNotIn('sys.exit(1)', source, '不要硬编码退出码')
 
     def test_junit结果文件路径与ci配置默认值一致(self):
         with patch_config():

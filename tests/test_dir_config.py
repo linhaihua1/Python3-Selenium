@@ -24,7 +24,7 @@ class TestDirConfig(unittest.TestCase):
         )
 
     def test_工程根目录下确实存在标志性文件(self):
-        for name in ('run.py', 'entrance.py', 'getcwd.py', 'config.ini', 'Common'):
+        for name in ('run.py', 'getcwd.py', 'config.ini', 'Common'):
             self.assertTrue(
                 os.path.exists(os.path.join(dir_config.base_dir, name)),
                 '工程根目录应包含：%s' % name,

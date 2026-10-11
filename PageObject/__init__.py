@@ -17,7 +17,7 @@
     ❌ 页面对象里不要出现 xpath 字符串，一律从 Element1 取
 
 【本目录文件】
-    loginPage.py     统一门户登录 + 融媒体素材库操作（在用）
+    loginPage.py     示例业务的页面对象：登录 + 素材库操作（在用，可整体替换）
     genericPage.py   跨系统通用页面对象：靠 placeholder / 按钮文字定位，
                      不写任何 xpath，接入新系统零代码（见 config.ini [system]）
 

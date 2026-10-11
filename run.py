@@ -93,7 +93,7 @@ def parse_args(argv=None):
     返回 argparse.Namespace，形如 args.title / args.filename / args.mail ...
     """
     parser = argparse.ArgumentParser(
-        description='融媒体生产系统 UI 自动化测试（支持 CI/CD 流水线调用）'
+        description='Web UI 自动化测试（支持 CI/CD 流水线调用）'
     )
 
     # ---- 报告元信息 ----

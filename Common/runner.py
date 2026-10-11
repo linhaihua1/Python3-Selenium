@@ -6,10 +6,10 @@
 
 【一句话说明】
     整个测试流程的"发动机"：收集用例 -> 逐条执行 -> 生成 HTML 报告 + JUnit XML
-    -> （可选）发邮件。run.py 和 entrance.py 这两个入口最终都是调它。
+    -> （可选）发邮件。run.py 是工程唯一的入口，最终调的就是它。
 
 【在框架中的位置】
-    run.py / entrance.py          （入口，只传参）
+    run.py（唯一入口，只传参）
         └─> Common/runner.py      <- 本文件
               ├─> unittest 的 discover        去 TestSuites/ 找 test*.py
               ├─> TestSuites/testLogin.py     执行用例（内部再用 PageObject）

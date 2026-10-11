@@ -1,9 +1,29 @@
-# Python3-Selenium 融媒体生产系统 UI 自动化
+# Python3-Selenium Web UI 自动化框架
 
 基于 **unittest + Selenium 4 + PageObject** 的 Web UI 自动化测试工程，支持本机执行与
 **Jenkins CI/CD 流水线自动冒烟**。
 
 一次执行产出两份报告：**中文 HTML 报告**（给人看）+ **JUnit XML**（给流水线看）。
+
+---
+
+##★ 这是一套通用框架，附一个示例业务
+
+| 部分 | 是什么 | 换系统时怎么办 |
+|---|---|---|
+| `Common/` | **框架层**，与被测系统无关 | 一行都不用改 |
+| `PageObject/genericPage.py` | 配置驱动的通用页面对象 | 一行都不用改 |
+| `PageObject/loginPage.py`<br>`Common/elementPage.py`<br>`TestSuites/*.py` | **示例业务**：某个融媒体生产系统的登录/素材库流程 | 整体替换 |
+
+**框架层不知道被测的是什么系统**，它只提供执行、配置、日志、报告、浏览器操作这些能力。
+所有业务差异都被挡在配置与薄薄一层页面对象里。
+
+> **★ 测试数据全部动态配置 ★**
+> 页面标题、查询关键字、表单字段值、报告名称等**没有任何代码默认值**
+> （历史上曾在代码里留"兜底默认值"，换系统后忘了改配置，会拿旧系统的标题
+> 去比对，报出完全看不出原因的失败）。
+> 现在统一用 `Config.get_required()`：配置缺失就在**打开浏览器之前**报错中止，
+> 并打印该去 `config.ini` 哪一段补哪个键。换系统**只改 config.ini**。
 
 ---
 
@@ -45,7 +65,7 @@ python run.py
 
 | 产出 | 位置 | 用途 |
 |---|---|---|
-| HTML 报告 | `Report/融媒体生产系统webUI自动化测试报告.html` | 浏览器打开，给人看 |
+| HTML 报告 | `Report/` 下（文件名由 `[report] filename` 决定） | 浏览器打开，给人看 |
 | JUnit XML | `Report/junit-results.xml` | 给流水线看 |
 | 日志 | `Logs/日期/Error_Logs/xxx.log` | 失败原因，带模块名与行号 |
 | 失败截图 | `img/日期/xxx.png` | 断言失败瞬间的页面 |
@@ -79,29 +99,30 @@ Jenkins 直接用它判定构建成败。详见 [CI-CD 接入指南](docs/CI-CD�
 
 **对接流水线时再补这两个**：`Common/ci.py`（构建上下文）、`Common/junitReport.py`（JUnit 结果）。
 
-其余文件（`dir_config.py` / `sentMail.py` / `configOverWriter.py` / `entrance.py` / 两个手工脚本）按需再看。
+其余文件（`dir_config.py` / `sentMail.py` / `configOverWriter.py` / `getcwd.py`）按需再看。
 
 ---
 
 ## 三、被测业务是什么
 
 ```
-统一门户(登录)  →  融媒体生产系统(工作台)  →  素材库  →  上传 / 查询 / 报送
- title:统一门户     title:工作台-云媒资系统     title:素材库-云媒资系统
+示例业务的链路（换成你自己的系统时只改 config.ini 里的三个标题）：
+
+ 门户(登录)  →  业务系统(工作台)  →  素材库  →  上传 / 查询 / 报送
 ```
 
 6 条用例串行走完这条链：
 
-| 用例 | 做什么 | 断言 | 副作用 |
+| 用例 | 做什么 | 断言（期望值来自配置） | 副作用 |
 |---|---|---|---|
-| `test_1login` | 输入账号密码登录 | 标题 = 统一门户 | 无 |
-| `test_2select_scxt` | 点「发布系统」并切到新标签页 | 标题 = 工作台 - 云媒资系统 | 无 |
-| `test_3material` | 内容管理 → 素材库 | 标题 = 素材库 - 云媒资系统 | 无 |
-| `test_4uplaodbutton` | 选视频 → 填作者/手机号/上报单位 → 上传 → 确定 | 标题未跳走 | **上传视频** |
+| `test_1login` | 输入账号密码登录 | `[assert] title_login` | 无 |
+| `test_2select_scxt` | 点系统入口并切到新标签页 | `[assert] title_workbench` | 无 |
+| `test_3material` | 菜单进入素材库 | `[assert] title_material` | 无 |
+| `test_4uplaodbutton` | 选文件 → 填表单 → 上传 → 确定 | 标题未跳走 | **上传文件** |
 | `test_5keyword` | 关键字查询 → 重置 | 标题未跳走 | 无 |
-| `test_6submitted` | 刷新 → 报送 → 选初审人 → 保存 | 标题未跳走 | **提交报送单** |
+| `test_6submitted` | 刷新 → 报送 → 选审核人 → 保存 | 标题未跳走 | **提交单据** |
 
-> 业务术语：**报送** = 把素材提交进审核流程；**初审人** = 第一级审核人。
+> ★ 表单字段值、查询关键字同样来自 `[testcase]`，不在代码里。
 > 前 3 条无副作用，组成**冒烟集**（`--suite smoke`）；全量含后 3 条，会写真实数据。
 
 ---
@@ -111,7 +132,8 @@ Jenkins 直接用它判定构建成败。详见 [CI-CD 接入指南](docs/CI-CD�
 ```
 ├── Common/                     公共层
 │   ├── basePage.py             基类：浏览器、定位、交互、上传、截图（唯一直接调 Selenium）
-│   ├── elementPage.py          元素表：全工程 xpath 集中地
+│   │├── 第七节跨系统通用能力    按文字/placeholder/属性定位、表格行定位、遮罩等待…
+│   ├── elementPage.py          元素表：示例业务的 xpath（换系统时整体替换）
 │   ├── runner.py               执行器：收集用例 → [三道闸门] → 执行 → HTML 报告 + JUnit XML
 │   ├── config.py               config.ini 读写 + UI_* 环境变量覆盖
 │   ├── configOverWriter.py     定制 ConfigParser（保留键大小写 + 关闭 % 插值）
@@ -134,11 +156,11 @@ Jenkins 直接用它判定构建成败。详见 [CI-CD 接入指南](docs/CI-CD�
 │   ├── notifier.py             结果推送到钉钉 / 企业微信
 │   └── getcwd.py               返回工程根目录
 ├── PageObject/                 页面对象层
-│   ├── loginPage.py            门户登录 + 素材库操作（在用）
-│   └── genericPage.py          配置驱动的通用页面对象（接新系统用）
-├── TestSuites/                 用例层（UI 用例，会被 run.py 执行）
+│   ├── loginPage.py           ★示例业务：门户登录 + 素材库操作（换系统时替换）
+│   └── genericPage.py          配置驱动的通用页面对象（接新系统用，不用改）
+├── TestSuites/                 用例层（UI 用例，会被 run.py 执行）★示例业务
 │   ├── testLogin.py            主用例集（6 条串行业务用例）
-│   └── testMaterialCheck.py    素材库只读校验（3 条，标了 readonly）
+│   └── testMaterialCheck.py    只读校验样板（3 条，标了 readonly）
 ├── tests/                      框架单元测试（不开浏览器、零业务副作用）
 │   ├── helpers.py              测试基座：假 driver、临时目录隔离、沙盒
 │   ├── samples.py              样例用例类（故意失败/出错等，不参与收集）
@@ -149,7 +171,7 @@ Jenkins 直接用它判定构建成败。详见 [CI-CD 接入指南](docs/CI-CD�
 │     └── Report/artifacts/日期/  失败自动取证：截图 + 页面源码
 ├── config.ini                  本地配置（含账号密码，已 gitignore）
 ├── config.ini.example          配置模板（入库）
-├── run.py / entrance.py        入口（主 / 备用）
+├── run.py                      唯一入口（参数解析 + 配置档翻译）
 ├── Jenkinsfile                 Jenkins 声明式流水线
 ├── Dockerfile                  容器化运行环境（Chromium + 中文字体）
 ├── requirements.txt            运行依赖（只需要 selenium）
@@ -202,7 +224,6 @@ python run.py --preflight                          # 体检这台机器能不能
 python -m Common.preflight --quiet                  # 等价写法，只列出有问题的项
 
 # ---- 其他 ----
-python entrance.py                                 # 备用入口（党建云主题报告）
 python -m Common.sentMail                          # 单独验证发信
 python -m Common.ci                                # 查看当前 CI 上下文
 python -m Common.locator_policy --issues           # 看元素表里哪些定位很脆弱

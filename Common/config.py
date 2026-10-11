@@ -32,6 +32,18 @@
     推荐：Config.get('段', '键', '默认值')   —— 取不到就返回默认值，不抛异常
     旧式：Config.config_read('段', '键')     —— 等价于 get，保留给老代码
     多值：Config.get_list('段', '键')        —— 返回列表，支持逗号/换行/分号分隔
+    ★ 必填：Config.get_required('段', '键')  —— 取不到立即报错并说明怎么改
+            ★★凡是「业务数据」（期望标题、查询关键字、表单字段等）都用它★★
+            框架层通用开关（超时、路径、是否无头）才用 get + 默认值。
+            原因见get_required 的文档字符串：拿错的默认值去比对会产生
+            "标题不符"这种掩盖真实原因的失败。
+
+【★ 测试数据配置化约定（本工程的一条硬规则）】
+    框架代码里**不允许**出现任何具体被测系统的业务数据 —— 页面标题、
+    查询关键字、上报单位、手机号、报告名称等，一律只能来自 config.ini。
+    换系统 / 换环境时只改配置，不改任何 .py 文件。
+    违反这条会怎样，tests/test_config.py 与 tests/test_test_login_suite.py
+    里有专门的检查把住（源码里出现业务字面量就让单测变红）。
 
 【新人必读：环境变量覆盖（CI/CD 的关键机制）】
     读取任意配置项前，会先查同名环境变量，规则：
@@ -169,6 +181,70 @@ class Config:
 
     # 兼容旧调用名：历史代码里写的是 config_read，效果与 get 完全一致
     config_read = get
+
+    @staticmethod
+    def get_required(section, key, purpose='', env_name=None):
+        """读取**必须配置**的项，取不到立即抛错。【所有业务数据的推荐读法】
+
+        :param section:  段名，如 'assert'
+        :param key:      键名，如 'title_login'
+        :param purpose:  这项配置是干什么的（中文），会拼进报错信息，让人一眼知道该改哪里
+        :param env_name: 环境变量名；不传按 UI_<段>_<键> 规则自动推导
+        :return: 配置值（已strip）
+
+        :raise ValueError: 配置缺失或为空时抛出，消息里给出三种修复方式
+
+        ★ 为什么需要它（与 get 的区别）
+            get(section, key, fallback) 取不到就返回一个默认值。对通用框架来说，
+            那个默认值往往是上一个被测系统留下的业务字面量 —— 一旦忘了改配置，
+            就会拿着一个错的期望值去比对，报出"标题不符"这种看不懂的失败，
+            真实原因（配置没填）被完全掩盖。
+
+            所以凡是「业务相关的数据」（期望标题、查询关键字、表单字段…）
+            一律用本方法：配置缺失就让用例**明确失败并说清怎么改**，
+            而不是用一个错的期望值跑出一个误导性的断言失败。
+
+        报错消息里同时给出三种修复方式，覆盖三种使用场景：
+            ① 改 config.ini        —— 本机开发
+            ② 设环境变量            —— CI 上用凭据注入，不落仓库
+            ③ 命令行 --env 指定档位  —— 多环境切换
+        """
+        env_name = env_name or Config._env_name(section, key)
+        value = Config.get(section, key, None)
+        # get() 已经处理过环境变量覆盖；这里再确认一次没有把空串当成有效值
+        if value is not None and not str(value).strip():
+            value = None
+        if value is not None:
+            return str(value).strip()
+
+        what = '（%s）' % purpose if purpose else ''
+        raise ValueError(
+            '缺少必填配置 [%s] %s%s。\n'
+            '        三种修复方式，任选其一：\n'
+            '          1. 在 config.ini 的 [%s] 段补上  %s = 实际值\n'
+            '          2. 设置环境变量（CI 推荐，不落仓库）：  set %s=实际值\n'
+            '          3. 若该项目有环境档位，可用命令行指定：  python run.py --env 档位名'
+            % (section, key, what, section, key, env_name)
+        )
+
+    @staticmethod
+    def get_required_list(section, key, purpose='', env_name=None):
+        """必填版的列表读取：取不到或为空列表都报错。
+
+        用于"必须填的多个值"型配置（如冒烟用例关键字、生产特征黑名单）。
+        分隔规则与 get_list 完全一致（换行 / 逗号 / 分号）。
+        """
+        items = Config.get_list(section, key, None)
+        if items:
+            return items
+        env_name = env_name or Config._env_name(section, key)
+        what = '（%s）' % purpose if purpose else ''
+        raise ValueError(
+            '缺少必填配置 [%s] %s%s（值为空）。\n'
+            '        请在 config.ini 的 [%s] 段填写实际值，'
+            '或设置环境变量 %s=实际值（多个值用逗号或换行分隔）。'
+            % (section, key, what, section, env_name)
+        )
 
     @staticmethod
     def get_bool(section, key, fallback=False):
@@ -317,18 +393,27 @@ class Config:
     def get_account():
         """取出登录账号，返回元组 (用户名, 密码)。【在用】
 
+        ★ 两个字段都是必填的：账号密码是所有 UI 用例的前置条件，
+        缺任何一个都意味着这次执行注定失败。与其跑到一半报
+        "元素不存在"，不如在第一步就说清"没配账号，去哪里配"。
+
         用例里这样用：
             username, password = Config.get_account()
         这样账号只存在于 config.ini，代码里不再硬编码。
         """
         return (
-            Config.get('testcase', 'login_username'),
-            Config.get('testcase', 'login_password'),
+            Config.get_required('testcase', 'login_username', '登录账号'),
+            Config.get_required('testcase', 'login_password', '登录密码'),
         )
 
     @staticmethod
     def get_upload_file():
-        """取出待上传文件的绝对路径；未配置则返回 None。【在用】
+        """取出待上传文件的绝对路径。【在用】
+
+        ⚠️ 与账号不同，这里**允许返回 None** —— 上传不是每条用例都要做，
+        只读冒烟用例完全用不到它。真正要上传的用例（files_upload / autoit）
+        会在使用时显式校验"路径为空或文件不存在"并抛出可读的 FileNotFoundError，
+        不会静默跳过。
 
         支持配置里写 ~/video/demo.mp4 这种带用户目录的写法。
         """
@@ -336,3 +421,34 @@ class Config:
         if not value:
             return None
         return os.path.abspath(os.path.expanduser(value))
+
+    @staticmethod
+    def get_form_field(key, purpose=''):
+        """取上传/查询表单里的一个字段值。【推荐】
+
+        表单字段（作者、手机号、上报单位…）在不同系统里名称与是否必填都不同，
+        所以框架不预设字段清单，改为按需读取：
+
+            author = Config.get_form_field('video_author', '上传表单的视频作者')
+            phone= Config.get_form_field('phone', '上传表单的手机号')
+
+        :param purpose: 中文说明，会拼进报错信息
+        :return: 配置值（已strip）
+        :raise ValueError: 未配置时抛出，提示去 config.ini [testcase] 补
+        """
+        return Config.get_required('testcase', key, purpose or ('表单字段 %s' % key))
+
+    @staticmethod
+    def get_assert_value(key, purpose=''):
+        """取一条断言的期望值（页面标题等）。【推荐】
+
+        用例里的断言期望值必须来自配置，且**不设代码兜底**：
+        兜底里放的是一个具体系统的标题，换系统后忘了改就会拿它去比对，
+        报出"期望[旧系统标题] 实际[新系统标题]"这种毫无信息量的失败。
+
+        用法：
+            expected = Config.get_assert_value('title_login', '登录后首页标题')
+
+        :raise ValueError: 未配置时抛出，提示去 config.ini [assert] 补
+        """
+        return Config.get_required('assert', key, purpose or ('断言期望值 %s' % key))

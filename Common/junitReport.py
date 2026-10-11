@@ -27,7 +27,7 @@
       <testsuite name="TestSuites.testLogin.TestLogin" tests="6" ...>
         <testcase classname="TestSuites.testLogin.TestLogin" name="test_1login" time="8.1"/>
         <testcase classname="..." name="test_5keyword" time="4.2">
-          <failure message="'素材库 - 云媒资系统' != '素材库'">完整堆栈...</failure>
+          <failure message="'期望标题' != '实际标题'">完整堆栈...</failure>
         </testcase>
         <system-out>用例打印的输出</system-out>
       </testsuite>

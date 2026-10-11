@@ -15,7 +15,7 @@
               └─> Common/basePage.py     通用浏览器能力（含跨系统通用方法）
 
 【与 LoginPage 的区别】
-    LoginPage 是为某个具体系统（融媒体）写死的页面对象，元素来自 elementPage。
+    LoginPage 是为某个具体系统写死的页面对象（随示例业务提供），元素来自 elementPage。
     GenericPage 不绑定任何具体系统，元素靠"占位符/按钮文字"等稳定特征定位，
     定位值全部来自 config.ini 的 [system] 段。接入新系统优先用本文件。
 
