@@ -526,6 +526,7 @@ class FakeChromeOptions:
     def __init__(self):
         self.arguments = []
         self.experimental = {}
+        self.capabilities = {}      # set_capability 收下的东西（如 goog:loggingPrefs）
         self.binary_location = None
 
     def add_argument(self, arg):
@@ -533,6 +534,14 @@ class FakeChromeOptions:
 
     def add_experimental_option(self, name, value):
         self.experimental[name] = value
+
+    def set_capability(self, name, value):
+        """真实 ChromeOptions 也有这个方法，用于开启 console 日志采集等能力。
+
+        （open_browser 会用 set_capability('goog:loggingPrefs', ...) 开启
+        浏览器 console 采集，假对象必须一并支持，否则测出来的"打开成功"是假的。）
+        """
+        self.capabilities[name] = value
 
 
 class FakeWebDriverFactory:

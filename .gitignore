@@ -15,7 +15,8 @@ config.local.ini
 # ---------------------------------------------------------------------------
 # 二、运行产物：每次执行都会重新生成，入库只会让仓库越来越臃肿
 # ---------------------------------------------------------------------------
-# 测试报告（HTML、JUnit XML）
+# 测试报告（HTML、JUnit XML）、覆盖率产物（coverage.xml / coverage-html）、
+# 通过率趋势（history.jsonl）—— Report/ 整目录一次覆盖
 Report/
 # 运行日志（All_Logs / Error_Logs）
 Logs/
@@ -25,6 +26,12 @@ img/
 geckodriver.log
 chromedriver.log
 *.log
+# 覆盖率与本机调试产物（防止在工程根直接跑工具时留下散件）
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.history.jsonl
 
 # ---------------------------------------------------------------------------
 # 三、Python 与虚拟环境
@@ -39,6 +46,8 @@ env/
 build/
 dist/
 *.egg-info/
+# 按 pyproject.toml 可编辑安装后产生的元数据
+*.egg-link
 
 # ---------------------------------------------------------------------------
 # 四、编辑器 / 操作系统

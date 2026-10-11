@@ -1,0 +1,48 @@
+# ==========================================================================
+#  EditorConfig —— 让所有编辑器/IDE 用同一套缩进与换行约定
+#
+#  【为什么需要】
+#     多人协作时最烦的 diff 噪音：有人用 4 空格、有人用 Tab、
+#     有人在 Windows 上存成 CRLF、有人文件末尾不留空行。
+#     这些差异会让 code review 里全是格式变化，真正的问题看不见。
+#
+#     本文件被主流编辑器原生或插件支持（VSCode / PyCharm / Vim / Sublime…），
+#     不需要任何人做配置，clone 下来就统一。
+#
+#  【和 .pre-commit-config.yaml 的分工】
+#     .editorconfig  预防 —— 在编辑器里就按规范写
+#     pre-commit     兜底 —— 万一没遵守，提交时自动修正
+# ==========================================================================
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{py}]
+# Python 遵循 PEP 8：4 空格
+indent_size = 4
+
+[*.{js,json,yaml,yml,toml,html,css}]
+indent_size = 2
+
+[*.md]
+# Markdown 里行尾两个空格是「换行」语义，不能去掉
+trim_trailing_whitespace = false
+
+[*.{ini,cfg,conf}]
+# 配置文件保持原样，避免误改 ini 的续行缩进
+indent_size = 4
+
+[Makefile]
+# Makefile 必须用 Tab，否则规则不生效
+indent_style = tab
+
+[*.{bat,cmd}]
+# Windows 批处理用 CRLF
+end_of_line = crlf

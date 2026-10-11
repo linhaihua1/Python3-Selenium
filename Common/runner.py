@@ -684,11 +684,19 @@ def run(tests_dir=None, pattern='test*.py', title=None, report_name=None,
     # 失败摘要打印到控制台，流水线日志里一眼可见
     print_failure_digest(result)
 
+    # ---- 7.5 失败归因：把"失败了"变成"为什么失败、该找谁" ----
+    #   有失败时才打印，成功时不占日志。归类是规则驱动的，见 failureClassifier。
+    if failures or errors:
+        from Common.failureClassifier import format_digest
+        digest = format_digest(result.cases)
+        if digest:
+            print(digest)
+
     duration = round(time.time() - run_start, 3)
     log1.info('本次执行耗时 %.1f 秒，用例 %d 条，失败 %d，错误 %d，跳过 %d，退出码 %d'
               % (duration, result.testsRun, failures, errors, skipped, exit_code))
 
-    return _summary(
+    summary = _summary(
         exit_code=exit_code,
         tests_run=result.testsRun,
         failures=failures,
@@ -699,6 +707,26 @@ def run(tests_dir=None, pattern='test*.py', title=None, report_name=None,
         duration=duration,
         cases=[{k: v for k, v in item.items() if k != 'stdout'} for item in result.cases],
     )
+
+    # ---- 8. 记录趋势（失败归因 + 通过率历史）----
+    #   ★ 趋势是辅助功能，任何异常都不能影响退出码与测试结论，
+    #     所以整段用 try 包住并只记日志（trend 内部也已各自容错）。
+    try:
+        from Common import trend as trend_module
+        from Common.failureClassifier import summarize
+        attribution = summarize(result.cases)
+        trend_module.append_run(summary, extra={
+            'primary_failure': attribution.get('primary'),
+            'failed_categories': {k: len(v)
+                                  for k, v in attribution.get('categories', {}).items()},
+        })
+        trend_text = trend_module.format_trend()
+        if trend_text:
+            print(trend_text)
+    except BaseException:       # noqa: BLE001 - 趋势失败绝不能影响测试结论
+        log1.error('记录通过率趋势失败（不影响本次测试结论）', exc_info=1)
+
+    return summary
 
 
 def _summary(**kwargs):

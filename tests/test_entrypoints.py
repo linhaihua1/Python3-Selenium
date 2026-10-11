@@ -17,7 +17,6 @@ import contextlib
 import io
 import os
 import unittest
-from unittest import mock
 
 from tests.helpers import load_module, patch_config
 from Common import runner

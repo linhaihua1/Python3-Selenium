@@ -64,12 +64,36 @@ class TestElementCoverage(unittest.TestCase):
         'content', 'material',                                     # 素材库导航
         'FileInput', 'videoauthor', 'phone', 'reporting', 'upload',  # 上传
         'keyword', 'querybutton', 'replacement',                   # 查询
-        'submission', 'first_trial', 'person_of_first_instance', 'save',  # 报送
+        'submission', 'first_trial', 'save',                        # 报送
     )
+
+    #: ★ 已删除的定位，删了就别再加回来（理由见下）
+    RETIRED = {
+        # 旧写法是"下拉列表第 8 项"，把审核人的**位置序号**写死 ——
+        # 人员列表顺序一变就会静默选错人：不报错、用例还是绿的，最难发现。
+        # 现改用 Element1.first_trial_person(姓名) 按姓名定位（姓名来自配置）。
+        'person_of_first_instance',
+    }
 
     def test_关键元素齐全(self):
         for name in self.REQUIRED:
             self.assertTrue(hasattr(Element1, name), '缺少关键元素：%s' % name)
+
+    def test_已退役的脆弱定位不得回归(self):
+        """★ 防止有人把写死序号的定位又加回来。"""
+        for name in self.RETIRED:
+            self.assertFalse(
+                hasattr(Element1, name),
+                '[%s] 是已退役的脆弱定位（写死下拉序号，会静默选错人）。\n'
+                '    需要选审核人请用 Element1.first_trial_person(姓名)。' % name)
+
+    def test_审核人按姓名动态构造定位(self):
+        """审核人定位不再是固定条目，而是按姓名生成。"""
+        self.assertTrue(callable(getattr(Element1, 'first_trial_person', None)),
+                        '应提供 first_trial_person(name) 按姓名构造下拉项定位')
+        selector = Element1.first_trial_person('张三')
+        self.assertEqual(selector[0], 'xpath')
+        self.assertIn('张三', selector[1])
 
     def test_文件上传控件使用input_file(self):
         """上传走 send_keys 方案的前提：定位到 input[type=file]。"""

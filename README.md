@@ -46,8 +46,10 @@
 ### 1.1 本机运行
 
 ```bash
-# 1. 安装依赖（只需 selenium，driver 由 Selenium 4 自动管理）
-pip install -r requirements.txt
+# 1. 安装依赖（推荐：一次性装齐运行+开发工具；driver 由 Selenium 4 自动管理）
+pip install -e ".[dev]"
+#    只跑测试不写代码的话，装最小集即可：
+#    pip install -r requirements.lock     # 用锁定版本，可精确复现
 
 # 2. 准备配置：复制模板后按注释修改
 #    Windows:     copy config.ini.example config.ini
@@ -154,6 +156,9 @@ Jenkins 直接用它判定构建成败。详见 [CI-CD 接入指南](docs/CI-CD�
 │   ├── dependency.py           用例依赖声明 + 失败级联跳过
 │   ├── parallelRunner.py       多进程并行执行（按文件分片）
 │   ├── notifier.py             结果推送到钉钉 / 企业微信
+│   ├── apiClient.py            ★接口层客户端（测试金字塔底层）
+│   ├── failureClassifier.py    ★失败自动归因（7 类 + 处理建议）
+│   ├── trend.py                ★通过率趋势与劣化告警
 │   └── getcwd.py               返回工程根目录
 ├── PageObject/                 页面对象层
 │   ├── loginPage.py           ★示例业务：门户登录 + 素材库操作（换系统时替换）
@@ -190,8 +195,82 @@ Jenkins 直接用它判定构建成败。详见 [CI-CD 接入指南](docs/CI-CD�
 | `PageObject/` 页面对象层 | 一个方法 = 一个业务动作 | 不写断言、不出现 xpath 字符串 |
 | `Common/basePage.py` | 封装浏览器与元素操作 | 不掺业务逻辑 |
 | `Common/elementPage.py` | 只放元素定位值 | 不放业务代码 |
+| `Common/apiClient.py` | 封装 HTTP 细节 | 不做断言 |
 
 一句话：**用例层管断言，页面对象管动作，基类管操作，元素表管定位。**
+
+---
+
+## 五之二、企业级约定（这几条是"红线"，都有单测把守）
+
+### 1. 断言必须落在**业务结果**上
+
+```python
+# ✗ 只断言标题 —— 上传失败、报送被拒、接口 500 都会判绿（"假绿"）
+self.check_title('上传视频', self.title_material)
+
+# ✓ 断言业务结果 —— 上传后列表行数真的 +1
+ok, count = self.login_page.wait_material_count(at_least=before + 1, timeout=30)
+self.assertTrue(ok, '上传后行数未增加：%d -> %d' % (before, count))
+```
+
+自问一句：**如果这个功能坏了，我的断言会不会红？** 不会就说明断言不够。
+
+### 2. 用例必须能**单独运行**
+
+每条用例开头调 `ensure_login()` / `ensure_workbench()` / `ensure_material_page()`
+补前置（幂等，顺序跑时零开销）。这样 `--cases test_5keyword` 才能单独跑。
+
+### 3. 用**条件等待**，不要 `my_sleep`
+
+`wait_title` / `wait_text` / `wait_any_text` / `wait_loading_gone` /
+`wait_material_count` / `wait_status_changed` —— 对了就立刻返回，更快也更稳。
+（门禁会扫描用例层，发现 `my_sleep` 调用直接让单测变红。）
+
+### 4. 稳定性机制**默认生效**，不用手动调
+
+`click()` / `type()` 已内置重试（瞬时错误重试、确定性错误立即失败）。
+`retry()` / `safe_click()` 仍保留，但新代码不需要用。
+
+### 5. 代码里不许有**业务数据**
+
+页面标题、查询关键字、表单字段值一律来自 `config.ini`，
+用 `Config.get_assert_value()` / `get_form_field()`（缺失即报错）。
+理由：留兜底默认值的话，换系统忘了改配置会拿旧系统的标题去比对，
+报出看不出原因的失败。门禁：`tests/test_config_required.py`
+
+### 6. 断言失败要能**自动归因**
+
+`Common/failureClassifier.py` 把失败分成 7 类
+（定位/环境/配置/业务/数据/超时/未归类），每类给出"下一步找谁"。
+控制台上会直接打印归因摘要 —— 不必逐条读堆栈。
+
+---
+
+## 五之三、质量门禁（本地 + CI 双保险）
+
+```bash
+python -m flake8                                    # 代码规范（0 输出 = 通过）
+python tests/run_unit_tests.py                      # 框架单测 731 项 / 35 秒
+python -m coverage run --source=Common,PageObject -m tests.run_unit_tests \
+    && python -m coverage report                   # 覆盖率（阈值 82%）
+python -m Common.locator_policy --fail-over 10      # 定位门禁（绝对路径必须 0）
+python -m mypy Common/                              # 类型检查（渐进式）
+
+pre-commit install                                  # 装一次，之后每次 commit 自动跑
+```
+
+| 门禁 | 阈值 | 只能…… |
+|---|---|---|
+| 覆盖率 | 82%（实测 87%） | 只升不降 |
+| 脆弱定位 | 10 条（实测 10） | 只降不升 |
+| 绝对路径 xpath | **0 条** | 红线，一条都不许有 |
+| 业务数据硬编码 | 0 处 | 红线 |
+| flake8 | 0 问题 | **缺失即失败**（不再静默跳过） |
+
+> 阈值统一记在 `pyproject.toml` 与 `Jenkinsfile`，
+> 并有单测校验"两处一致"（`tests/test_engineering_standards.py`）——
+> 避免出现"本地过、CI 挂"这种最让人困惑的状态。
 
 ---
 
@@ -228,6 +307,12 @@ python -m Common.sentMail                          # 单独验证发信
 python -m Common.ci                                # 查看当前 CI 上下文
 python -m Common.locator_policy --issues           # 看元素表里哪些定位很脆弱
 python run.py --help                               # 全部参数
+
+# ---- 质量门禁（本地自检，与 CI 同一套）----
+python -m flake8                                    # 代码规范
+python -m mypy Common/                              # 类型检查
+python -m coverage run --source=Common,PageObject -m tests.run_unit_tests
+python -m coverage report                           # 覆盖率（阈值 82%）
 ```
 
 **参数优先级**：`命令行 / 环境变量` > `config.ini` > `代码默认值`。
@@ -315,11 +400,14 @@ python tests/run_unit_tests.py --junit Report/unit-tests.xml   # 流水线用
 ```
 
 - 退出码与 `run.py` 一致：`0` 通过、`1` 有失败
-- 当前覆盖 **350 项 / 15 个模块**：配置、日志、CI 适配、元素表、基类、执行器、JUnit 报告、
-  报告模板、邮件、页面对象、用例层结构、命令行入口、测试基座自检
-- 全程 26 秒左右，跑完不留痕：不写工程 `Logs/`、不在系统临时目录留垃圾目录
+- 当前覆盖 **731 项 / 32 个模块**：配置、必填配置门禁、日志、CI 适配、元素表、基类、
+  执行器、JUnit 报告、报告模板、邮件、页面对象、用例层结构、命令行入口、测试基座自检等
+- 全程 30 秒左右，跑完不留痕：不写工程 `Logs/`、不在系统临时目录留垃圾目录
   （日志走 `UI_LOG_DIR` 重定向，临时目录登记到 `atexit` 统一回收）
 - 流水线里的 `框架单元测试` stage 已经接好（见 `Jenkinsfile`），比 UI 用例更早发现问题
+
+> 数字别照着抄 —— 用 `python tests/run_unit_tests.py` 现跑一次为准。
+> 历史上这里写的是「350 项」，早已过时（说明手工维护的数字必然漂移）。
 
 常用开关：
 
@@ -382,8 +470,9 @@ python tests/run_unit_tests.py --junit Report/unit-tests.xml   # 流水线用
   （造数-清数 + 并行下唯一数据标记），新写写操作用例建议继承它；
   已有的 6 条串行业务流尚未改造，任一步失败仍会导致后续用例连续失败 ——
   排错时优先修**最早失败**的那条。
-- 断言以页面标题为主，业务数据（上传成功、查询命中数、报送状态）未被断言；
-  `BasePage.get_text()` / `get_value()` 已提供能力，可逐步补强。
+- ~~断言以页面标题为主~~ **已修复（2026-10-11）**：每条用例都有业务结果断言
+  （上传断言行数 +1、报送断言状态变化、查询断言列表渲染）+ console 报错拦截。
+  ⚠️ 这些断言依赖 `elementPage` 里新增的观察点定位，**需在真实环境验证一轮**。
 - 元素定位仍以 xpath 为主：当前实测 21 条里 13 条偏脆弱（含 2 条绝对路径）。
   已建立**防劣化门禁**（`tests/test_locator_policy.py` 把脆弱度冻结成基线，
   新增脆弱定位会让测试红），并可在 CI 用

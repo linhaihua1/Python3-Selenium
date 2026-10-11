@@ -38,6 +38,10 @@
 ==========================================================================
 """
 
+import time
+
+from selenium.common.exceptions import NoSuchElementException
+
 from Common.basePage import BasePage
 from Common.config import Config
 from Common.elementPage import Element1
@@ -208,18 +212,111 @@ class LoginPage(BasePage):
         self.click(Element1.replacement)         # 点「重 置」，为后续用例恢复初始状态
 
     # ====================================================================== #
-    # 五、报送（把素材提交进审核流程）
+    # 六、业务结果的「观察点」（只返回数据，断言由用例层做）
+    #
+    #   ★ 为什么需要这一节：
+    #     旧用例只断言页面标题，于是"上传失败但弹窗没关""查询 0 条命中"
+    #     "报送被拒绝"这类业务失败**照样判绿**（假绿）。
+    #     下面这些方法把"业务结果"变成可读的数据，让用例层能真正断言。
+    #     本层只负责"读"，不下结论 —— 断言是用例层的职责，别放错层。
     # ====================================================================== #
-    def submitted(self):
-        """对列表第一条素材执行报送：开初审下拉 -> 选初审人 -> 保存。
+    def get_material_count(self):
+        """读素材列表当前显示的数据行数。【在用：业务断言的核心观察点】
+
+        :return: 行数（int）；读不到返回 0
+
+        上传成功后行数应 +1，查询后可用来判断"命中了几条"。
+        """
+        rows = self.get_elements(Element1.material_rows, timeout=0)
+        count = len(rows)
+        log1.info('素材列表当前行数：%d' % count)
+        return count
+
+    def get_total_count_text(self):
+        """读列表的「共 N 条」文案（没有则返回空串）。"""
+        try:
+            return self.get_text(Element1.total_count, timeout=0) or ''
+        except (NoSuchElementException, ValueError):
+            return ''
+
+    def get_first_row_status(self):
+        """读列表第一行最后一列的文本（通常是状态位：待初审/已报送/已发布…）。
+
+        :return: 状态文本；读不到返回空串
+        报送用例用它验证"状态真的变了"，而不是"标题没变"。
+        """
+        try:
+            return (self.get_text(Element1.first_row_status, timeout=0) or '').strip()
+        except (NoSuchElementException, ValueError):
+            return ''
+
+    def wait_material_count(self, at_least=None, timeout=None):
+        """等待素材列表行数达到某个下限（上传是异步的，需要等）。
+
+        :param at_least: 期望的**最少**行数；不传则只等"列表出现"
+        :return: (是否满足, 最终行数)
+        """
+        timeout = timeout if timeout is not None else self.timeout
+        end_time = time.time() + timeout
+        count = 0
+        while True:
+            count = self.get_material_count()
+            if at_least is None:
+                if count > 0:
+                    return True, count
+            elif count >= at_least:
+                return True, count
+            if time.time() >= end_time:
+                log1.error('等待素材列表行数超时(%ss)：期望 >= %s，实际 %s'
+                           % (timeout, at_least, count))
+                return False, count
+            time.sleep(0.5)
+
+    def wait_status_changed(self, before, timeout=None):
+        """等待第一行的状态文本**不再是** before（用于报送后的状态流转）。
+
+        :param before: 操作前读到的状态文本
+        :return: (是否已变化, 最终状态文本)
+        """
+        timeout = timeout if timeout is not None else self.timeout
+        end_time = time.time() + timeout
+        current = before
+        while True:
+            current = self.get_first_row_status()
+            if current and current != before:
+                log1.info('状态已变化：%s -> %s' % (before, current))
+                return True, current
+            if time.time() >= end_time:
+                log1.error('等待状态变化超时(%ss)：仍为 [%s]' % (timeout, current))
+                return False, current
+            time.sleep(0.5)
+
+    # ====================================================================== #
+    # 七、报送（把素材提交进审核流程）
+    # ====================================================================== #
+    def submitted(self, person=None):
+        """对列表第一条素材执行报送：开审核人下拉 -> 选审核人 -> 保存。
+
+        :param person: 审核人姓名；不传则读 config.ini -> [testcase] first_trial_person
 
         业务说明：报送 = 把素材提交给第一级审核人（初审人）审核，
         运营流程上是「编辑提交 -> 初审 -> 终审 -> 发布」，本用例只覆盖第一步。
 
-        已知脆弱点：first_trial 和 person_of_first_instance 用的是绝对 xpath，
-        页面上多一层 div 就会失效，改版后优先检查这两个。
+        ★ 已从"下拉列表第 8 项"改为**按人名字定位**：
+          旧写法把审核人的**位置序号**写死，只要人员列表顺序一变就会
+          **静默选错人** —— 选错人不报错、用例照样绿，是最危险的一类缺陷。
+          现在姓名来自配置，换人只改 config.ini。
         """
-        self.click(Element1.submission)                  # 点第一行的「报 送」
-        self.click(Element1.first_trial)                 # 点开「初审」下拉框
-        self.click(Element1.person_of_first_instance)    # 选中初审人
-        self.click(Element1.save)                        # 点「保 存」
+        person = person or Config.get_form_field('first_trial_person', '报送的审核人姓名')
+        self._open_first_trial_dropdown()
+        self.click(Element1.first_trial_person(person))   # 按姓名选中
+        self.click(Element1.save)                         # 点「保 存」
+
+    def _open_first_trial_dropdown(self):
+        """点开素材列表的「报 送」-> 「初审」下拉框。
+
+        单独抽出来是为了让 submitted() 读起来仍是"三步业务动作"：
+        报送 -> 选人 -> 保存。
+        """
+        self.click(Element1.submission)   # 点第一行的「报 送」
+        self.click(Element1.first_trial)  # 点开「初审」下拉框

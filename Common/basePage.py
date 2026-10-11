@@ -176,6 +176,11 @@ class BasePage:
                 # 去掉"Chrome 正受到自动测试软件的控制"提示条
                 # （Selenium 4 中旧的 'disable-infobars' 参数已失效，改用下面这种）
                 options.add_experimental_option('excludeSwitches', ['enable-automation'])
+                # ★ 开启浏览器 console 日志采集：失败取证要靠它抓前端报错
+                #   （见 BasePage.get_console_logs / assert_no_console_error）。
+                #   想关掉以省一点开销：config.ini -> [ci] capture_console = false
+                if config.get_bool('ci', 'capture_console', True):
+                    options.set_capability('goog:loggingPrefs', {'browser': 'ALL'})
                 if headless:
                     # 无头模式：Jenkins 节点/容器里没有桌面，必须走这一支
                     for arg in HEADLESS_ARGS:
@@ -422,13 +427,23 @@ class BasePage:
     # 三、常用交互
     # ====================================================================== #
     def type(self, selector, value, timeout=None):
-        """清空输入框并输入内容。【在用】
+        """清空输入框并输入内容；瞬时错误自动重试。【在用，最常用】
 
         :param selector: 输入框的元素描述
         :param value:    要输入的内容
         :raise NoSuchElementException: 输入框不存在时抛出（而不是静默跳过），
                这样失败会明确记在测试报告里
+
+        ★ 重试已**默认生效**（见 _retry_action）：元素过期、DOM 刷新导致引用失效
+        这类瞬时错误会自动重试，用例层不必再写 safe_type()。
+        "输入框根本不存在"属于确定性错误，不重试，立即失败。
         """
+        return self._retry_action(
+            lambda: self._type_once(selector, value, timeout),
+            action='输入', selector=selector)
+
+    def _type_once(self, selector, value, timeout=None):
+        """执行一次输入（不重试）。失败时向上抛，由 _retry_action 决定是否重试。"""
         element = self.get_element(selector, timeout if timeout is not None else self.timeout)
         if element is None:
             raise NoSuchElementException('输入框不存在，无法输入：%s' % (selector,))
@@ -438,20 +453,29 @@ class BasePage:
             # 有些前端框架的输入框 clear() 不生效，退化成"全选 + 删除"
             element.send_keys(Keys.CONTROL, 'a')
             element.send_keys(Keys.DELETE)
-        try:
-            element.send_keys(value)
-            log1.info('输入的内容：%s' % value)
-        except WebDriverException:
-            # 输入失败立刻截图，方便回溯当时页面是什么样
-            log1.error('内容输入报错', exc_info=1)
-            self.get_img()
-            raise
+        element.send_keys(value)
+        log1.info('输入的内容：%s' % value)
 
     def click(self, selector, timeout=None):
-        """点击元素，失败自动降级为 JS 点击。【在用】
+        """点击元素，失败自动降级为 JS 点击；瞬时错误自动重试。【在用，最常用】
 
-        内部流程：定位（带等待）-> 滚动到可视区 -> 原生点击
-                  -> 报错则改用 JS 点击
+        内部流程：定位（带等待）-> 滚动到可视区 -> 原生点击 -> 报错则改用 JS 点击。
+        ★ 重试已**默认生效**：用例层不必再写 safe_click()。
+        但"元素根本不存在"属于确定性错误，不重试，立即失败。
+        """
+        return self._retry_action(
+            lambda: self._click_once(selector, timeout),
+            action='点击', selector=selector)
+
+    def _click_once(self, selector, timeout=None):
+        """执行一次点击（不重试）。
+
+        三种失败的处理方式不同，这是刻意区分的：
+            ① 元素过期（StaleElementReference）—— 向上抛，交给重试机制**重新定位**
+               一个已失效的元素引用，用 JS 去点它同样是无效的，必须重新找
+            ② 被遮挡/不可交互（其它 WebDriverException）—— 降级为 JS 点击
+               元素本身是好的，只是点不到，JS 点击能绕过遮挡
+            ③ 元素不存在（None）—— 确定性错误，直接抛，不重试
         """
         element = self.get_element(selector, timeout if timeout is not None else self.timeout)
         if element is None:
@@ -460,55 +484,114 @@ class BasePage:
         try:
             element.click()
             log1.info('点击元素成功')
+        except StaleElementReferenceException:
+            # 元素已失效：不能拿旧引用做 JS 点击，必须让上层重新定位
+            log1.warning('元素已失效（DOM 可能已刷新），将重新定位后重试')
+            raise
         except WebDriverException:
             log1.error('常规点击失败，降级为JS点击', exc_info=1)
             self.js_click(element)
 
     # ====================================================================== #
-    # 稳定性增强：自动重试 + 防元素过期（降低 CI 上的偶发失败 flaky）
+    # 稳定性增强：自动重试 + 防元素过期（默认生效，降低 CI 上的偶发失败 flaky）
     #   Web 自动化最常见的偶发失败：元素还没渲染完、DOM 刚刷新导致引用过期、
     #   点击被临时遮罩挡住。对这些"重试一次大概率就好"的瞬时错误，
-    #   框架层统一兜底重试，避免用例本身到处写 try/except。
+    #   框架层统一兜底重试，**用例层不需要写任何 safe_xxx()**。
+    #
+    #   ★ 与旧版的区别：旧版要用例显式调 safe_click()/safe_type() 才生效，
+    #     而实际用例一条都没调 → 等于没有。现在直接在 click()/type() 内部重试。
     # ====================================================================== #
     # 默认对「瞬时错误」重试 2 次（共尝试 3 次）；可被配置 [ci] retry_times 覆盖
     DEFAULT_RETRY = 2
+
+    #: 视为「瞬时」的异常：重试一次大概率能过。
+    #: StaleElementReference 元素过期（DOM 刷新）、Timeout 等待超时、
+    #: WebDriverException 点击被遮挡/元素未就绪等。
+    TRANSIENT_ERRORS = (StaleElementReferenceException, TimeoutException, WebDriverException)
+
+    #: 视为「确定性」的异常：重试多少次结果都一样，立即失败省时间。
+    #: NoSuchElement 元素根本不存在、ValueError 参数/配置错误、AssertionError 断言失败。
+    DETERMINISTIC_ERRORS = (NoSuchElementException, ValueError, AssertionError, FileNotFoundError)
 
     def _retry_times(self):
         """读取重试次数配置，缺省用 DEFAULT_RETRY。"""
         return config.get_int('ci', 'retry_times', self.DEFAULT_RETRY)
 
-    def retry(self, func, *args, **kwargs):
-        """对瞬时错误自动重试执行 func，成功即返回，全部失败才抛出。
+    def _retry_action(self, func, action='操作', selector=None, capture=True):
+        """对瞬时错误自动重试执行 func；成功即返回，最终失败才抛。
 
-        会被重试的异常：StaleElementReference（元素过期）、Timeout（等太久）、
-        以及其它 WebDriverException（点击被挡、元素未就绪等）。
-        AssertionError / ValueError 这类「业务断言或参数错误」不重试 ——
-        重试它们只会浪费时间，不会改变结果。
-
-        :param func: 要执行的函数（通常是 lambda: self.click(sel)）
+        :param func:     实际执行的动作（通常是 lambda: self._click_once(...)）
+        :param action:   动作名，仅用于日志（'点击' / '输入'）
+        :param selector: 元素描述，失败时日志定位用
+        :param capture:  最终失败时是否截图（click/type 为 True，
+                         通用 retry() 为 False —— 它不假设自己一定在操作页面）
         :return: func 的返回值
+        :raise: 最后一次失败的原始异常
+
+        【重试策略（为什么这样分）】
+            瞬时错误（元素过期 / 等待超时 / 被遮挡）-> 重试，因为这些"等一下就好"
+            确定性错误（元素不存在 / 参数错误 / 断言失败）-> 不重试，因为重试纯属浪费
+        截图只在**最终失败**时拍一次 —— 重试期间反复截图既慢又会产生一堆无用文件。
         """
         times = self._retry_times()
         last_exc = None
         for attempt in range(times + 1):
             try:
-                return func(*args, **kwargs)
-            except (StaleElementReferenceException, TimeoutException, WebDriverException) as e:
-                last_exc = e
+                return func()
+            except self.DETERMINISTIC_ERRORS:
+                # 确定性错误：不重试，直接抛（保留原始异常类型，调用方仍能 except 到）
+                raise
+            except self.TRANSIENT_ERRORS as exc:
+                last_exc = exc
                 if attempt < times:
-                    log1.warning('操作失败，第 %d/%d 次重试：%s' % (attempt + 1, times, e))
+                    log1.warning('%s失败，第 %d/%d 次重试：%s'
+                                 % (action, attempt + 1, times, exc))
                     self.my_sleep(1)   # 给页面一点喘息时间再重试
                 else:
-                    log1.error('重试 %d 次后仍失败：%s' % (times, e), exc_info=1)
+                    log1.error('%s重试 %d 次后仍失败：%s' % (action, times, exc), exc_info=1)
+        # 走到这里说明重试次数用尽；拍一张失败现场再用原始异常向上抛
+        if capture:
+            self._capture_failure_scene(action, selector)
         raise last_exc
 
+    def _capture_failure_scene(self, action, selector):
+        """动作最终失败时截一张图（截图失败不影响异常向上传播）。"""
+        try:
+            self.get_img()
+        except BaseException:       # pragma: no cover - 截图失败不能掩盖真实错误
+            log1.error('%s失败后截图未成功，已忽略（不影响失败原因）' % action)
+
+    def retry(self, func, *args, **kwargs):
+        """对瞬时错误自动重试执行 func，成功即返回，全部失败才抛出。【预留】
+
+        ★ 新代码不需要直接调它 —— click()/type() 已内置重试。
+          本方法保留给"整段业务动作需要重试"的场景（如整个表单提交），
+          以及历史兼容。
+
+        会被重试的异常：StaleElementReference（元素过期）、Timeout（等太久）、
+        以及其它 WebDriverException。
+        AssertionError / ValueError 这类「业务断言或参数错误」不重试 ——
+        重试它们只会浪费时间，不会改变结果。
+
+        :param func: 要执行的函数（通常是 lambda: self.click(sel)）
+        :return: func 的返回值
+
+        注意：本方法**不截图**（它不假设自己在操作页面，可能只是重试一段业务逻辑）。
+        失败现场的截图由 click()/type() 各自负责。
+        """
+        return self._retry_action(lambda: func(*args, **kwargs), capture=False)
+
     def safe_click(self, selector, timeout=None):
-        """带重试的点击：元素过期/被遮挡等瞬时错误会自动重试。【推荐用于易 flaky 的步骤】"""
-        return self.retry(lambda: self.click(selector, timeout))
+        """带重试的点击。【已内置，保留兼容】
+
+        ★ click() 现在默认就会重试，本方法等价于 click()，
+          保留是为了不破坏历史代码与文档。
+        """
+        return self.click(selector, timeout)
 
     def safe_type(self, selector, value, timeout=None):
-        """带重试的输入。"""
-        return self.retry(lambda: self.type(selector, value, timeout))
+        """带重试的输入。【已内置，保留兼容】★ type() 现在默认就会重试。"""
+        return self.type(selector, value, timeout)
 
     def input_enter(self, txt, value, name='xpath', selector=None):
         """在输入框里输入内容后按回车（常用于搜索框）。【预留】
@@ -547,6 +630,139 @@ class BasePage:
         title = self.driver.title
         log1.info('当前打开的title是：%s' % title)
         return title
+
+    def wait_title(self, expected, timeout=None, contains=False):
+        """等待页面标题变成期望值（或包含期望片段）。【推荐：替代 my_sleep】
+
+        :param expected: 期望的标题（contains=True 时为片段）
+        :param timeout:  最长等待秒数，默认取 self.timeout
+        :param contains: True=只要包含即可（标题常带构建号/环境后缀时用它）
+        :return: (是否等到, 最终实际标题)
+
+        为什么必须有它：
+            旧用法是 `click(); my_sleep(5); check_title()` —— 等 5 秒是拍脑袋，
+            页面快时白等 5 秒（全量用例白等一分钟），页面慢时又不够。
+            改成"等到标题正确就立刻返回"，用例既**更快**又**更稳**。
+        """
+        timeout = timeout if timeout is not None else self.timeout
+        end_time = time.time() + timeout
+        actual = ''
+        while True:
+            try:
+                actual = self.driver.title or ''
+            except WebDriverException:
+                # 页面正在跳转时读 title 可能抛异常，属于正常现象，继续等
+                actual = ''
+            if (expected in actual) if contains else (actual == expected):
+                log1.info('标题已符合预期：%s' % actual)
+                return True, actual
+            if time.time() >= end_time:
+                log1.error('等待标题超时(%ss)：期望[%s] 实际[%s]' % (timeout, expected, actual))
+                return False, actual
+            time.sleep(0.3)
+
+    def wait_text(self, text, selector=None, timeout=None, visible=True):
+        """等待某段文字出现在页面上（或被指定元素包含）。【推荐：替代 my_sleep】
+
+        :param text:     要找的文字
+        :param selector: 限定在某个元素内查找；不传则整页
+        :param timeout:  最长等待秒数
+        :param visible:  True 要求可见（默认），False 只要求存在于 DOM
+        :return: (是否等到, 命中的元素或 None)
+        """
+        timeout = timeout if timeout is not None else self.timeout
+        end_time = time.time() + timeout
+        while True:
+            try:
+                if selector is None:
+                    hit = self.get_element_by_text(text, contains=True, timeout=0)
+                else:
+                    holder = self.get_element(selector, timeout=0)
+                    hit = holder if (holder is not None and text in (holder.text or '')) else None
+                if hit is not None and (not visible or self.isdisplayed(hit)):
+                    log1.info('期待的文字已出现：%s' % text)
+                    return True, hit
+            except WebDriverException:
+                pass
+            if time.time() >= end_time:
+                log1.error('等待文字超时(%ss)：%s' % (timeout, text))
+                return False, None
+            time.sleep(0.3)
+
+    def wait_any_text(self, *texts, timeout=None):
+        """等待**任意一条**文字出现，返回命中的那一条。
+
+        :return: (命中的文字, 元素)；全都没出现则 (None, None)
+
+        用途：结论断言。比如"报送成功"和"报送失败"两种提示，
+        等到哪个就说明业务走了哪条分支 —— 比盲等 5 秒再断言标题强得多。
+        """
+        timeout = timeout if timeout is not None else self.timeout
+        end_time = time.time() + timeout
+        while True:
+            for text in texts:
+                try:
+                    hit = self.get_element_by_text(text, contains=True, timeout=0)
+                except WebDriverException:
+                    hit = None
+                if hit is not None and self.isdisplayed(hit):
+                    log1.info('命中预期文字：%s' % text)
+                    return text, hit
+            if time.time() >= end_time:
+                log1.error('等待任一文字超时(%ss)：%s' % (timeout, ' / '.join(texts)))
+                return None, None
+            time.sleep(0.3)
+
+    # ====================================================================== #
+    # 浏览器 console 日志（前端报错的唯一线索）
+    # ====================================================================== #
+    def get_console_logs(self, level=None):
+        """读取浏览器 console 日志。返回 [{level, message, ...}, ...]。【在用】
+
+        :param level: 只看某个级别，如 'SEVERE'（错误）；不传则全部
+
+        为什么重要：
+            页面上"看起来正常"但功能不对时（点了没反应、数据没刷新），
+            真正的原因往往只在 console 里 —— 一个 JS 报错、一个接口 500。
+            不抓 console，排查只能靠猜。
+            ★ 需要在 open_browser 里开启日志采集（[ci] capture_console，默认开启）。
+        """
+        try:
+            raw = self.driver.get_log('browser')
+        except (WebDriverException, AttributeError, TypeError):
+            # 未开启采集 / 驱动不支持（如 firefox 默认不支持 get_log）
+            return []
+        except BaseException:       # noqa: BLE001 - 不能因为日志采集把用例搞挂
+            return []
+        logs = []
+        for item in raw or []:
+            if level and str(item.get('level', '')).upper() != str(level).upper():
+                continue
+            logs.append(item)
+        return logs
+
+    def get_console_errors(self):
+        """只取 console 里的错误日志（SEVERE 级别），最常用于失败取证。"""
+        return self.get_console_logs(level='SEVERE')
+
+    def assert_no_console_error(self, ignore_patterns=None):
+        """断言本次操作没产生新的 console 错误。【推荐：抓"假绿"】
+
+        :param ignore_patterns: 可忽略的错误片段列表（如第三方埋点报错）
+        :raise AssertionError: 存在未忽略的 console 错误时抛出，消息里带上报错内容
+
+        为什么需要它（本工程曾经最大的盲区）：
+            旧用例只断言页面标题，于是"接口 500 但页面照常渲染"
+            "JS 抛异常但标题没变"这类问题一律被判为通过。
+            加上这条断言后，前端报错会直接让用例变红。
+        """
+        ignored = tuple(ignore_patterns or ())
+        errors = [item for item in self.get_console_errors()
+                  if not any(pattern in str(item.get('message', '')) for pattern in ignored)]
+        if errors:
+            detail = '；'.join(str(item.get('message', ''))[:200] for item in errors[:5])
+            raise AssertionError('浏览器 console 出现 %d 条错误：%s' % (len(errors), detail))
+        return True
 
     def get_text(self, selector, timeout=None):
         """获取元素的文本内容（页面上看得见的字）。【预留】

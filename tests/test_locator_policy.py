@@ -31,14 +31,34 @@ from Common.locator_policy import (
 )
 
 # ==========================================================================
-# ★ 基线：当前工程元素表的实测值（2026-10-06）
+# ★ 基线：当前工程元素表的实测值
 #   改定位后允许这个数字变小；变大了就说明引入了新的脆弱定位，测试会失败。
+#
+#   2026-10-06 首版：total 21 / flawed 13 / absolute 2 / deep_index 5
+#   2026-10-11 治理后：把最脆弱的三条改成语义定位（详见 elementPage 文件头）
+#       submission                 长链路+td[8]+button[3]  -> 按「报 送」文字锚定
+#       first_trial                /html/body/div[4]/...  -> 按「初审」文字向上找
+#       person_of_first_instance   "下拉第 8 项"（会静默选错人）
+#                                  -> 改为按人名字构造的 first_trial_person()
+#                                     （不再是固定条目，故总数少 1）
+#       结果：absolute 2 -> 0，flawed 13 -> 10
+#       （同时新增 3 条"业务断言观察点"：material_rows / total_count /
+#         first_row_status，均用语义写法，未推高脆弱数）
 # ==========================================================================
-BASELINE_TOTAL = 21
-BASELINE_FLAWED = 13          # INDEXED + DEEP_INDEX + ABSOLUTE
-BASELINE_ABSOLUTE = 2         # first_trial / person_of_first_instance
-BASELINE_DEEP_INDEX = 5
+BASELINE_TOTAL = 23
+BASELINE_FLAWED = 10          # INDEXED + DEEP_INDEX + ABSOLUTE
+BASELINE_ABSOLUTE = 0         # 绝对路径已清零 —— 这是一条**不许回升**的红线
+BASELINE_DEEP_INDEX = 4
 BASELINE_MISSING_COMMENT = 0
+
+#: 有意变更过定位值的条目（相对 git HEAD）。
+#: 用途：让"定位治理"这种正确操作不被门禁拦住，同时保证**任何**变更都必须
+#: 显式登记 —— 漏登记的改动仍然会让测试变红（见 TestCli.test_定位值变更必须是有意为之）。
+BENIGN_CHANGES = {
+    'submission',               # 长链路+td[8] -> 按「报 送」文字锚定
+    'first_trial',              # 绝对路径 -> 按「初审」文字向上找表单项
+    'person_of_first_instance',  # 已删除（改为 first_trial_person(姓名) 动态构造）
+}
 
 
 class TestRateLocator(unittest.TestCase):
@@ -179,9 +199,21 @@ class TestRealElementPage(unittest.TestCase):
             % (BASELINE_FLAWED, self.stats['flawed'],
                '、'.join(n for n in self.stats['flawed_names'])))
 
-    def test_绝对路径xpath不得超过基线(self):
-        self.assertLessEqual(self.stats['absolute'], BASELINE_ABSOLUTE,
-                             '绝对路径 xpath 是维护成本最高的写法，不要再新增')
+    def test_绝对路径xpath为零(self):
+        """★ 绝对路径 xpath 已全部清除，**任何一条回升都让测试变红**。
+
+        绝对路径（/html/body/div[4]/...）是维护成本最高的写法：
+        页面上多套一层 div 就失效，且失效时报的是"找不到元素"，
+        排查时很难联想到是定位写法的问题。所以这里设成零容忍红线。
+        """
+        fragile_names = ('first_trial', 'person_of_first_instance', 'submission')
+        self.assertEqual(
+            self.stats['absolute'], BASELINE_ABSOLUTE,
+            '绝对路径 xpath 出现 %d 条（应为 %d）：%s\n'
+            '    请改用 id / 可见文字 / 属性定位；'
+            '不依赖 DOM 层级的定位才扛得住前端改版'
+            % (self.stats['absolute'], BASELINE_ABSOLUTE,
+               '、'.join(n for n in self.stats['flawed_names'] if n in fragile_names)))
 
     def test_长链路定位不得超过基线(self):
         self.assertLessEqual(self.stats['deep_index'], BASELINE_DEEP_INDEX)
@@ -192,15 +224,46 @@ class TestRealElementPage(unittest.TestCase):
         self.assertLessEqual(len(missing), BASELINE_MISSING_COMMENT,
                              '这些定位缺注释：%s' % missing)
 
-    def test_最脆弱的两条仍被标注出来(self):
-        """锁定已知的最脆弱条目标记 —— 它们被改好时这条会失败，提醒更新基线。
+    def test_已知最脆弱的三条已改造成语义定位(self):
+        """★ 锁定治理成果，防止被改回去。
 
-        改好了就把它们从下面的集合里移除，并把 BASELINE_ABSOLUTE 减一。
+        这三条曾经是全工程最脆弱的（两条绝对路径、"下拉第 8 项"写死序号），
+        2026-10-11 已改成语义定位。若它们又变成 ABSOLUTE/DEEP_INDEX，
+        说明有人回退了 —— 那会重新引入"改版必挂"和"静默选错人"两类缺陷。
         """
-        known_fragile = {'first_trial', 'person_of_first_instance'}
-        actual = {e['name'] for e in self.entries if e['rating'] == ABSOLUTE}
-        self.assertEqual(actual, known_fragile,
-                         '绝对路径定位清单变了：现在有 %s。若已改善，请下调基线' % actual)
+        fixed = {'submission', 'first_trial'}
+        by_name = {e['name']: e for e in self.entries}
+        for name in fixed:
+            if name not in by_name:
+                continue
+            self.assertNotIn(
+                by_name[name]['rating'], (ABSOLUTE, DEEP_INDEX),
+                '[%s] 又变回脆弱定位了（%s）—— '
+                '它应该是按可见文字锚定的语义定位' % (name, by_name[name]['rating']))
+
+    def test_审核人定位不再依赖下拉序号(self):
+        """★ 按人名字定位，不再写死"第 8 项"。
+
+        写死序号的危险在于：人员列表顺序一变就**静默选错人** ——
+        选错人不报错、用例照样绿，是最难发现的一类缺陷。
+        """
+        from Common.elementPage import Element1
+        self.assertFalse(
+            hasattr(Element1, 'person_of_first_instance'),
+            'person_of_first_instance（下拉第 8 项）应已删除，'
+            '改用 Element1.first_trial_person(姓名) 按人名字定位')
+        self.assertTrue(callable(getattr(Element1, 'first_trial_person', None)),
+                        '应提供 first_trial_person(name) 用于按姓名构造定位')
+        selector = Element1.first_trial_person('张三')
+        self.assertEqual(selector[0], 'xpath')
+        self.assertIn('张三', selector[1])
+        self.assertNotIn('li[8]', selector[1])
+
+    def test_审核人姓名里的引号被安全转义(self):
+        """姓名带单引号时不能让 xpath 语法崩掉。"""
+        from Common.elementPage import Element1
+        selector = Element1.first_trial_person("O'Brien")
+        self.assertNotIn("'O'Brien'", selector[1], '单引号应被转义，否则 xpath 语法错误')
 
     def test_定位值都与工程实际一致(self):
         """扫描结果要和真实 import 出来的值对得上，防止解析器跑偏。"""
@@ -242,10 +305,16 @@ class TestCli(unittest.TestCase):
     def test_阈值足够大时返回0(self):
         self.assertEqual(self._run_cli(['--fail-over', '999']), 0)
 
-    def test_git_head版本与当前版本的定位值一致(self):
-        """用 git 里的上一版做对照，确认扫描器对同一份代码给出稳定的结果。
+    def test_定位值变更必须是有意为之(self):
+        """扫描器对同一份代码要给出稳定结果；定位值变更必须显式登记。
 
-        没有 git 仓库时（比如导出的压缩包）跳过，不让它变成必然失败。
+        【为什么改了这条测试】
+            旧版直接断言"与上一版逐条一致"，本意是防止有人手滑改错定位。
+            但定位治理本身就是要**有意改动**定位值 —— 那条断言会让
+            "把绝对路径改成语义定位"这种正确操作反而失败，属于把门禁设反了。
+
+            现在的做法：允许变更，但要求把变更过的条目名写进 BENIGN_CHANGES，
+            等于"改定位必须是有意为之并留下记录"。漏登记的变更照样变红。
         """
         try:
             old_src = subprocess.check_output(
@@ -258,11 +327,16 @@ class TestCli(unittest.TestCase):
             new_src = fp.read()
         old = {e['name']: e['value'] for e in parse_locators(old_src)}
         new = {e['name']: e['value'] for e in parse_locators(new_src)}
-        # 允许新增条目，但已有条目的定位值不应被本次改动改动
+
+        unexpected = []
         for name, value in old.items():
-            if name in new:
-                self.assertEqual(new[name], value,
-                                 '[%s] 的定位值与上一版不一致，改定位必须有意为之' % name)
+            if name in new and new[name] != value and name not in BENIGN_CHANGES:
+                unexpected.append(name)
+        self.assertEqual(
+            unexpected, [],
+            '这些定位值变了但没有登记：%s\n'
+            '    若是有意的定位治理，请把它们加入本文件的 BENIGN_CHANGES；\n'
+            '    若是手滑改错，请还原。' % unexpected)
 
 
 if __name__ == '__main__':

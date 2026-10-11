@@ -1,25 +1,46 @@
 # ==========================================================================
-#  开发/CI 质量工具依赖（**跑测试本身不需要**，只在本地检查与流水线门禁用）
+#  开发 / CI 质量工具依赖（**跑测试本身不需要**，只在本地检查与流水线门禁用）
 #  安装：pip install -r requirements.txt -r requirements-dev.txt
+#       或（推荐）pip install -e ".[dev]"   —— 上界统一在 pyproject.toml 维护
+#
+#  说明：本文件保留给"只想装开发工具、不想做可编辑安装"的 CI 节点。
+#        依赖上界的**唯一来源**是 pyproject.toml，这里不要重复写死版本范围，
+#        否则两边会各说各话（正是"配置漂移"的典型来源）。
 # ==========================================================================
 #
 #  【为什么不合并进 requirements.txt】
 #    requirements.txt 是"跑 UI 用例的最小集合"，Jenkins 节点与 Docker 镜像
-#    只装它就能出报告。flake8 属于"写代码的人用的"，混进去会让运行环境变重，
+#    只装它就能出报告。这些工具属于"写代码的人用的"，混进去会让运行环境变重，
 #    也容易让新人以为少了它测试就跑不了。
 #
 #  【装了它之后能做什么】
-#    1. 代码规范门禁
-#         python -m flake8                  # 全工程检查，有输出即为不合格
-#         python -m flake8 Common/basePage.py   # 只查单个文件
-#    2. 元素定位规范门禁（不需要 flake8，工程内置）
-#         python -m Common.locator_policy              # 打印定位清单与脆弱度分级
-#         python -m Common.locator_policy --issues      # 只看有问题的条目
-#         python -m Common.locator_policy --fail-over 13  # 脆弱定位超过 13 条则退出码 1
+#    1. 代码规范门禁（配置在 pyproject.toml [tool.flake8]）
+#         python -m flake8                        # 全工程检查
+#         python -m flake8 Common/basePage.py     # 只查单个文件
+#    2. 类型检查（渐进式：先覆盖框架核心层）
+#         python -m mypy Common/                  # 配置在 [tool.mypy]
+#    3. 框架单测覆盖率（阈值 70，配置在 [tool.coverage.report]）
+#         python -m coverage run -m unittest discover -s tests -t .
+#         python -m coverage report -m
+#         python -m coverage html                 # 产出 Report/coverage-html/
+#    4. 依赖漏洞扫描
+#         python -m pip_audit -r requirements.lock
+#    5. 提交前自动检查（把问题挡在本地，不消耗 CI 资源）
+#         pre-commit install
+#         pre-commit run --all-files
+#    6. 元素定位规范门禁（不需要额外依赖，工程内置）
+#         python -m Common.locator_policy --fail-over 10
 #
 #  【规则配置在哪】
-#    工程根目录的 .flake8（最大行宽 120、放行 E402/W503/W504、tests/ 放开 E501）。
+#    统一在工程根的 pyproject.toml（[tool.flake8] / [tool.mypy] / [tool.coverage.*]）。
+#    收敛到一处是为了避免"CI 没读到配置、悄悄用默认值跑"这类门禁失效问题。
 #    规则是"工程约定"的落地，不要随手改松。
 # ==========================================================================
 
-flake8>=7.0.0
+-r requirements.txt
+
+flake8
+coverage[toml]
+mypy
+pre-commit
+pip-audit

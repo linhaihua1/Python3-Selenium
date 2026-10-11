@@ -57,12 +57,20 @@
     它会按 GOOD / INDEXED / DEEP_INDEX / ABSOLUTE 四级给每条定位评级，
     **只读源码、不启动浏览器**，随时可跑。
 
-    【已知最脆弱的三条（按危险程度排序）】
-        1. person_of_first_instance —— 绝对路径 + "下拉列表第 8 项"，序号写死
-        2. first_trial             —— 绝对路径，从 /html/body 逐层写下来
-        3. submission              —— 长链路 + td[8]（第 8 列）+ button[3]
-    前两条已在本文件中给出**语义化替代写法**（见对应条目上方的注释，搜 "替代写法"）。
-    替换到真实环境验证一次后，把 loginPage 里的引用改过去即可。
+    【已完成的定位治理（2026-10-11）】
+        全工程最脆弱的三条已经改掉，不再依赖绝对路径与写死的序号：
+            submission           长链路+td[8]+button[3]  ->  按可见文字「报 送」锚定
+            first_trial          /html/body/div[4]/...  ->  按「初审」文字向上找表单项
+            person_of_first_instance  下拉第 8 项（会静默选错人）->  按人名字定位
+        其中审核人姓名来自 config.ini -> [testcase] first_trial_person，
+        换人只改配置、不改代码。
+
+    【当前的脆弱条目（仍有，改版时优先检查）】
+        下面这些是「带少量下标的相对 xpath」（INDEXED 级），
+        它们锚在结构上而非文字上，前端调整层级时可能失效：
+            Sign_button / content / material / videoauthor / phone / reporting
+        改法同上：优先按可见文字、placeholder 或属性定位。
+        体检命令：python -m Common.locator_policy --issues
 
     【新增定位时的优先级（按稳健程度从高到低）】
         id > name > 可见文字 > 占位提示 > 元素属性 > css > 相对 xpath
@@ -124,31 +132,62 @@ class Element1:
     # 「重 置」按钮（清空查询条件，把列表还回初始状态）
     replacement = ['xpath', "//*[@id='app']/div/div[2]/section/section/main/div[1]/form/div[7]/div/button"]
 
+    # ==================== 素材列表：用于业务结果断言 ====================
+    # ★ 这些是「断言用的观察点」，不是操作目标。
+    #   有了它们，用例才能验证"上传真的成功了""查询真的命中了"，
+    #   而不是只断言"页面标题没变"（那种断言在业务失败时照样绿）。
+    #   相对 xpath + 语义锚定，不写死行号列号。
+    material_rows = ['xpath', "//table//tbody/tr"]                      # 列表数据行（数行数）
+    total_count = ['xpath', "//*[contains(text(),'共') and contains(text(),'条')]"]  # "共 N 条"
+    # 第一行最后一列（状态位）。用 last() 而不是写死列号 ——
+    # 前端增删列时不会失效（状态列通常固定在最后）。
+    # 取第一个匹配元素即第一行的状态。
+    first_row_status = ['xpath', "//table//tbody/tr/td[last()]"]
+
     # ==================== 业务动作三：报送 ====================
-    # 素材列表第一行的「报 送」按钮（td[8] 是第 8 列，前端调列顺序会失效）
-    # ⚠️ 脆弱（DEEP_INDEX）：长链路 + td[8] + button[3] 三重写死。
-    #    替代写法（按可见文字锚定，需在真实环境验证一次后启用）：
-    #        ['xpath', "//table//tr[1]//button[.//span[normalize-space(text())='报 送']]/span"]
-    #    或者更彻底：用 click_by_text('报 送') 走框架的语义定位。
-    #    下面这个值用隐式字符串拼接写成多行，是为了不超长 —— 拼接结果与原值完全一致。
+    # 素材列表第一行的「报 送」按钮。
+    # ★ 已从「长链路 + td[8] + button[3]」改为**按可见文字锚定**：
+    #    旧写法把"第 8 列第 3 个按钮"写死，前端一调列顺序或加个图标就失效。
+    #    新写法只认"这一行里有『报 送』字样的按钮"，与列顺序无关。
     submission = ['xpath',
-                  "//*[@id='app']/div/div[2]/section/section/main/div[2]/div[4]/div[2]"
-                  "/table/tbody/tr[1]/td[8]/div/button[3]/span"]
-    # ⚠️ 脆弱（ABSOLUTE，全工程最脆弱之一）：从 /html/body 逐层写死，
-    #    且 div[4] 这种序号完全依赖当前 DOM 结构。页面一改必挂。
-    #    替代写法（按「初审」这段文字向上找到所在的表单项，再取里面的下拉箭头）：
-    #        ['xpath', "//*[normalize-space(text())='初审']/ancestor::div[contains(@class,'el-form-item')]//i"]
-    #    若前端能加 data-testid（如 data-testid="first-trial-select"），
-    #    直接用 ['css', '[data-testid=first-trial-select]'] 最稳 —— 建议找前端提这个需求。
-    first_trial = ['xpath', "/html/body/div[4]/div/div[2]/section/main/form/div[2]/div/div/div/span/span/i"]  # 「初审」下拉框
-    # ⚠️ 脆弱（ABSOLUTE，全工程最脆弱的一条）：不只是绝对路径，
-    #    连"下拉列表第 8 项"这个**业务序号**都写死了 —— 只要初审人列表顺序一变就选错人。
-    #    替代写法（按人名字定位，而不是按位置）：
-    #        ['xpath', "//li[contains(@class,'el-select-dropdown__item')][normalize-space(text())='<初审人姓名>']"]
-    #    姓名从 config.ini [testcase] 读，新增一项 first_trial_person 即可，
-    #    这样换人只改配置，不用改代码。
-    person_of_first_instance = ['xpath', "/html/body/div[5]/div[1]/div[1]/ul/li[8]"]  # 下拉列表里的第 8 项（初审人）
+                  "//table//tr[1]//button[.//span[contains(normalize-space(text()), '报') "
+                  "and contains(normalize-space(text()), '送')]]/span"]
+    # 「初审」下拉框。
+    # ★ 已从「/html/body/div[4]/... 绝对路径」改为**按标签文字向上找所属表单项**：
+    #    旧写法从根节点逐层写死，页面上多套一层 div 就挂。
+    #    新写法从「初审」这两个字出发，找到它所在的表单项，再取里面的下拉箭头。
+    first_trial = ['xpath',
+                   "//*[normalize-space(text())='初审']"
+                   "/ancestor::div[contains(@class,'form-item') or contains(@class,'el-form-item')]"
+                   "//i"]
     save = ['xpath', "(.//*[normalize-space(text()) and normalize-space(.)='返 回'])[1]/following::span[1]"]  # 「保 存」
+
+    # ----------------------------------------------------------------------
+    # 下面这条不是固定定位值，而是**按人名字动态构造**的定位。
+    #
+    # 旧写法 person_of_first_instance = /html/body/div[5]/div[1]/div[1]/ul/li[8]
+    # 有两个致命问题：① 绝对路径，DOM 一变就挂；
+    #                ② 写死"下拉列表第 8 项"这个业务序号 —— 只要审核人列表
+    #                   顺序一变（有人入职/离职/改名），就会**静默选错人**。
+    #                   选错人不会报错，用例照样绿 —— 这是最危险的一类缺陷。
+    #
+    # 新写法按"人名字"定位，姓名从 config.ini [testcase] first_trial_person 读。
+    # 换人只改配置，不用改代码。
+    # ----------------------------------------------------------------------
+    @staticmethod
+    def first_trial_person(name):
+        """按审核人姓名构造下拉选项定位。
+
+        :param name: 审核人姓名（来自 config.ini -> [testcase] first_trial_person）
+        :return: 元素描述，形如 ['xpath', "//li[...][normalize-space(text())='张三']"]
+
+        ★ 单引号会被转义，避免姓名里的引号破坏 xpath 语法。
+        """
+        safe = str(name).replace("'", "&apos;")
+        return ['xpath',
+                "//li[contains(@class,'el-select-dropdown__item') "
+                "or contains(@class,'option')]"
+                "[normalize-space(text())='%s']" % safe]
 
 
 # ---------------------------------------------------------------------------

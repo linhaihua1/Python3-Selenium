@@ -202,14 +202,34 @@ class TestQueryAndSubmit(_LoginPageTestCase):
         )
 
     def test_报送流程四步(self):
+        """报送：点「报 送」-> 开「初审」下拉 -> 按姓名选审核人 -> 保存。
+
+        ★ 第三条断言验证的是"按姓名定位"而不是"按第 N 项定位"：
+          写死序号的话，人员列表顺序一变就会静默选错人。
+        """
         page = self.make_page()
-        page.submitted()
+        with patch_config(ini_text='[testcase]\nfirst_trial_person = 张三\n'):
+            page.submitted()
+        expected_person = Element1.first_trial_person('张三')[1]
         self.assertEqual(
             self.located_values(),
             [Element1.submission[1], Element1.first_trial[1],
-             Element1.person_of_first_instance[1], Element1.save[1]],
-            '报送必须：点报送 -> 开初审下拉 -> 选初审人 -> 保存',
+             expected_person, Element1.save[1]],
+            '报送必须：点报送 -> 开初审下拉 -> 按姓名选审核人 -> 保存',
         )
+
+    def test_报送可显式指定审核人(self):
+        """姓名也可以由调用方直接传入（便于用例层按数据驱动换人）。"""
+        page = self.make_page()
+        page.submitted('李四')
+        self.assertIn(Element1.first_trial_person('李四')[1], self.located_values())
+
+    def test_审核人姓名必须来自配置(self):
+        """没配审核人时应明确报错，而不是静默选第一个。"""
+        page = self.make_page()
+        with patch_config(ini_text='[testcase]\nlogin_username = u\n'):
+            with self.assertRaises(ValueError):
+                page.submitted()
 
 
 class TestLayering(unittest.TestCase):

@@ -1,0 +1,76 @@
+# Pre-commit 钩子 —— 提交前把问题挡在本地
+#
+# ==========================================================================
+#  【为什么需要它】
+#      CI 上发现问题时，代码已经推上去了 —— 修一轮要等一次构建。
+#      把检查前移到 `git commit` 这一瞬间，反馈从"几分钟"变成"几秒"，
+#      而且**根本不消耗 CI 资源**。
+#
+#      本工程此前的状态：只有 Jenkinsfile 里有 flake8，本地提交毫无检查；
+#      更糟的是 Jenkinsfile 里写了 `|| true`，flake8 装不上就静默跳过 ——
+#      门禁等于没有。现在双保险：本地钩子 + CI 硬门禁。
+#
+#  【怎么用】
+#      pip install -e ".[dev]"
+#      pre-commit install          # 装到 .git/hooks/，之后每次 commit 自动跑
+#      pre-commit run --all-files  # 手动全量跑一次
+#
+#  【为什么钩子只做"快检查"】
+#      单测要 30 秒、UI 用例要几分钟，放提交钩子会让人想绕过它。
+#      所以这里只放 1~2 秒能跑完的静态检查；单测与覆盖率交给 CI。
+# ==========================================================================
+
+repos:
+  # ---- 基础卫生：文件末尾空行、行尾空格、BOM、YAML/TOML 语法 ----
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=2048]
+      - id: detect-private-key        # ★ 防止把私钥/凭据提交上去
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  # ---- 代码规范 + 语法错误 + 未使用导入（与 CI 同一份配置）----
+  - repo: https://github.com/PyCQA/flake8
+    rev: 7.0.0
+    hooks:
+      - id: flake8
+        additional_dependencies: []
+        # 配置统一读 pyproject.toml 的 [tool.flake8]
+
+  # ---- 定位规范门禁：脆弱定位不许增加 ----
+  #   ★ 这是本工程特有的钩子：元素定位劣化是渐进的，必须每次提交都拦住。
+  #     阈值与 Jenkinsfile 保持一致（改好后请同步下调两处）。
+  - repo: local
+    hooks:
+      - id: locator-policy
+        name: 元素定位规范（脆弱定位不得增加）
+        entry: python -m Common.locator_policy --fail-over 10
+        language: system
+        pass_filenames: false
+        files: ^Common/elementPage\.py$
+
+      # ---- 业务数据不得进入代码（本工程已配置化的红线）----
+      - id: no-business-data
+        name: 业务数据不得硬编码（必须来自 config.ini）
+        entry: python -m unittest tests.test_config_required -v
+        language: system
+        pass_filenames: false
+        files: ^(TestSuites|PageObject|Common)/.*\.py$
+
+      # ---- 快速单测：不开浏览器，约 30 秒 ----
+      #   想让提交更快可以先注释掉这一段，但**推上去之前请手动跑一次**。
+      - id: unit-tests
+        name: 框架单元测试
+        entry: python tests/run_unit_tests.py
+        language: system
+        pass_filenames: false
+        files: ^(Common|PageObject|TestSuites|tests)/.*\.py$

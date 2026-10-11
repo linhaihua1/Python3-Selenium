@@ -129,9 +129,11 @@ pipeline {
 
         // ------------------------------------------------------------------
         // ② 准备运行环境：独立虚拟环境 + 安装依赖
-        //    用 .venv 而不是节点的全局 Python，避免多个任务互相污染依赖版本
-        //    requirements-dev.txt 只提供 flake8（代码规范门禁），装不上不算致命，
-        //    所以用了 || true，避免因为内网源缺包把整条流水线卡死在第一步。
+        //    用 .venv 而不是节点的全局 Python，避免多个任务互相污染依赖版本。
+        //    ★ 优先用 requirements.lock（精确版本），保证"今天过的版本明天还能过"；
+        //      lock 不存在时退回 requirements.txt，并给出明确提示。
+        //    requirements-dev.txt 里带 lint/覆盖率/类型检查工具，
+        //    ★ 装不上会**直接失败** —— 否则后面的门禁 stage 会因为工具缺失而失去意义。
         // ------------------------------------------------------------------
         stage('准备运行环境') {
             steps {
@@ -142,16 +144,30 @@ pipeline {
                             set -e
                             python3 -m venv .venv
                             .venv/bin/python -m pip install --upgrade pip
-                            .venv/bin/python -m pip install -r requirements.txt
-                            .venv/bin/python -m pip install -r requirements-dev.txt || true
+                            if [ -f requirements.lock ]; then
+                                echo "使用锁定依赖 requirements.lock（可精确复现）"
+                                .venv/bin/python -m pip install -r requirements.lock
+                            else
+                                echo "【警告】未找到 requirements.lock，退回 requirements.txt（版本不锁定）"
+                                .venv/bin/python -m pip install -r requirements.txt
+                            fi
+                            .venv/bin/python -m pip install -r requirements-dev.txt
+                            .venv/bin/python -m pip list
                         '''
                     } else {
                         env.PYTHON_BIN = "${env.WORKSPACE}\\.venv\\Scripts\\python.exe"
                         bat '''
                             python -m venv .venv
                             .venv\\Scripts\\python.exe -m pip install --upgrade pip
-                            .venv\\Scripts\\python.exe -m pip install -r requirements.txt
+                            if exist requirements.lock (
+                                echo 使用锁定依赖 requirements.lock（可精确复现）
+                                .venv\\Scripts\\python.exe -m pip install -r requirements.lock
+                            ) else (
+                                echo 【警告】未找到 requirements.lock，退回 requirements.txt（版本不锁定）
+                                .venv\\Scripts\\python.exe -m pip install -r requirements.txt
+                            )
                             .venv\\Scripts\\python.exe -m pip install -r requirements-dev.txt
+                            .venv\\Scripts\\python.exe -m pip list
                         '''
                     }
                     echo "Python 解释器：${env.PYTHON_BIN}"
@@ -164,7 +180,12 @@ pipeline {
         //    纯静态检查，1 秒内出结果，比任何测试都便宜 —— 放在最前面当第一道门。
         //    它的价值不在"抓出错字"，而在让「注释乱、行宽乱、import 成堆没用」
         //    这类问题在合入前就暴露，代码不会随着时间烂掉。
-        //    规则见工程根 .flake8；flake8 缺失时跳过，不阻塞测试。
+        //    规则见 pyproject.toml [tool.flake8]。
+        //
+        //    ★★ 2026-10-11 的重要修正：删掉了"装不上就跳过"的静默降级 ★★
+        //    旧写法是 `flake8 装不上 -> echo 跳过`，等于门禁可以永久失效而无人察觉。
+        //    现在 flake8 缺失 → **直接失败**（退出码 2），强制把工具装齐。
+        //    这是刻意的：门禁如果不能保证生效，就不配叫门禁。
         // ------------------------------------------------------------------
         stage('代码规范检查') {
             steps {
@@ -172,16 +193,26 @@ pipeline {
                     def cmd = "\"${env.PYTHON_BIN}\" -m flake8"
                     echo "规范检查命令：${cmd}"
                     if (isUnix()) {
-                        // flake8 没装上（例如内网源不可用）时不要挡住建言流程
-                        sh "if \"${env.PYTHON_BIN}\" -m flake8 --version >/dev/null 2>&1; then ${cmd}; else echo '未安装 flake8，跳过代码规范检查'; fi"
+                        sh """
+                            set -e
+                            if ! "${env.PYTHON_BIN}" -m flake8 --version >/dev/null 2>&1; then
+                                echo "【门禁失败】未安装 flake8。"
+                                echo "  代码规范门禁不允许被跳过 —— 请检查依赖安装步骤"
+                                echo "  （requirements-dev.txt 里已声明 flake8；内网源缺包时请同步制品库）"
+                                exit 2
+                            fi
+                            ${cmd}
+                        """
                     } else {
                         bat """
                             "%PYTHON_BIN%" -m flake8 --version >nul 2>&1
                             if errorlevel 1 (
-                                echo 未安装 flake8，跳过代码规范检查
-                            ) else (
-                                ${cmd}
+                                echo 【门禁失败】未安装 flake8。
+                                echo   代码规范门禁不允许被跳过 —— 请检查依赖安装步骤
+                                echo   ^(requirements-dev.txt 里已声明 flake8；内网源缺包时请同步制品库^)
+                                exit /b 2
                             )
+                            ${cmd}
                         """
                     }
                 }
@@ -200,7 +231,9 @@ pipeline {
                 script {
                     // ★ 阈值 = 当前实测值。改好一条定位就往下调一格。
                     //   改完定位后先跑：python -m Common.locator_policy --issues
-                    def maxFlawedLocators = 13
+                    //   2026-10-11 由 13 降到 10（三条最脆弱定位已改成语义定位，
+                    //   绝对路径清零）。红线：绝对路径 xpath 必须保持 0。
+                    def maxFlawedLocators = 10
                     def cmd = "\"${env.PYTHON_BIN}\" -m Common.locator_policy --fail-over ${maxFlawedLocators}"
                     echo "定位检查命令：${cmd}"
                     if (isUnix()) {
@@ -213,20 +246,17 @@ pipeline {
         }
 
         // ------------------------------------------------------------------
-        // ⑤ 框架单元测试（质量门禁）
-        //    几十秒、不开浏览器、零业务副作用。
-        //    先证明"框架自身是好的"，再花几分钟跑 UI 用例 ——
-        //    UI 用例失败时最容易纠结"是框架坏了还是页面改版了"，
-        //    这一步能把这两类问题彻底分开。
+        // ⑤ 类型检查（渐进式）
+        //    本工程历史代码没有类型标注，所以采取渐进策略：
+        //    先覆盖框架核心层（Common/），把"会引发运行时错误"的问题挑出来
+        //    （如函数声明返回 X 却隐式返回 None）。
+        //    配置见 pyproject.toml [tool.mypy]；核心层之外的标注是后续工作。
         // ------------------------------------------------------------------
-        stage('框架单元测试') {
+        stage('类型检查') {
             steps {
                 script {
-                    def cmd = [
-                        "\"${env.PYTHON_BIN}\"", 'tests/run_unit_tests.py',
-                        '--junit Report/unit-tests.xml'
-                    ].join(' ')
-                    echo "单元测试命令：${cmd}"
+                    def cmd = "\"${env.PYTHON_BIN}\" -m mypy Common/"
+                    echo "类型检查命令：${cmd}"
                     if (isUnix()) {
                         sh cmd
                     } else {
@@ -237,7 +267,47 @@ pipeline {
         }
 
         // ------------------------------------------------------------------
-        // ⑥ 运行环境自检（不跑用例）
+        // ⑥ 框架单元测试 + 覆盖率门禁
+        //    几十秒、不开浏览器、零业务副作用。
+        //    先证明"框架自身是好的"，再花几分钟跑 UI 用例 ——
+        //    UI 用例失败时最容易纠结"是框架坏了还是页面改版了"，
+        //    这一步能把这两类问题彻底分开。
+        //
+        //    ★ 覆盖率阈值 = 70%（写在 pyproject.toml [tool.coverage.report]）。
+        //      没有阈值的覆盖率报告等于没测：没人会去看一个只涨不跌的数字。
+        //      阈值只能往上调，不能往下降。
+        // ------------------------------------------------------------------
+        stage('框架单元测试') {
+            steps {
+                script {
+                    def cmd = [
+                        "\"${env.PYTHON_BIN}\"", '-m', 'coverage', 'run',
+                        '--source=Common,PageObject',
+                        '-m', 'unittest', 'discover', '-s', 'tests', '-t', '.', '-p', 'test_*.py'
+                    ].join(' ')
+                    def reportCmd = [
+                        "\"${env.PYTHON_BIN}\"", '-m', 'coverage', 'report', '-m'
+                    ].join(' ')
+                    def xmlCmd = [
+                        "\"${env.PYTHON_BIN}\"", '-m', 'coverage', 'xml', '-o', 'Report/coverage.xml'
+                    ].join(' ')
+                    def htmlCmd = [
+                        "\"${env.PYTHON_BIN}\"", '-m', 'coverage', 'html', '-d', 'Report/coverage-html'
+                    ].join(' ')
+                    // 覆盖率低于阈值时 coverage report 退出码非 0 -> stage 变红
+                    def chain = [cmd, reportCmd, xmlCmd, htmlCmd].join(' && ')
+                    echo "单元测试+覆盖率命令：${chain}"
+                    if (isUnix()) {
+                        sh chain
+                    } else {
+                        bat chain
+                    }
+                }
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // ⑦ 运行环境自检（不跑用例）
         //    查的是"这台机器能不能跑"：Python / selenium / 浏览器 / 驱动版本 / 目录可写。
         //    单独做成一个 stage 而不是并进下一步，是为了让 Jenkins 页面上
         //    一眼就能分清「环境没搭好」和「用例真的挂了」—— 这两件事的

@@ -1,0 +1,131 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+# ==========================================================================
+#  项目元数据 —— 让本工程成为"可安装、可被工具识别"的标准 Python 项目
+#
+#  【为什么需要它】
+#    没有 pyproject.toml 时，flake8 / mypy / coverage / pytest 这些工具
+#    只能各用各的配置文件（.flake8、mypy.ini、.coveragerc…），
+#    而且 CI 上容易因为"没读到配置"而悄悄用默认值跑（= 门禁失效）。
+#    收敛到这一份文件后，工具配置只有一个来源，改一处全局生效。
+#
+#  【怎么用】
+#    pip install -e .                 可编辑安装（引入工程即可用）
+#    pip install -e ".[dev]"          连开发依赖一起装（lint/类型/覆盖率）
+# ==========================================================================
+
+[project]
+name = "web-ui-automation"
+version = "2.0.0"
+description = "企业级 Web UI 自动化框架（unittest + Selenium 4 + PageObject）"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Proprietary" }
+authors = [{ name = "QA Automation Team" }]
+keywords = ["selenium", "ui-automation", "testing", "page-object", "unittest"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Testing",
+]
+
+# ★ 依赖**必须有上界**：Selenium 出 5.x 时会破坏现有 API（find_element 等），
+#   没有上界的话某天 CI 会因为上游发版而突然全红，且不可复现。
+dependencies = [
+    "selenium>=4.19,<5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "flake8>=7.0,<8",
+    "pytest-cov>=5.0,<7",
+    "coverage[toml]>=7.4,<8",
+    "mypy>=1.8,<2",
+    "pre-commit>=3.6,<4",
+    "pip-audit>=2.7,<3",
+]
+
+[project.urls]
+Documentation = "docs/使用文档.md"
+Source = "docs/接入新系统指南.md"
+
+# --------------------------------------------------------------------------
+# 工具配置（单一来源）
+# --------------------------------------------------------------------------
+
+[tool.setuptools]
+py-modules = ["run", "getcwd"]
+
+[tool.setuptools.packages.find]
+include = ["Common*", "PageObject*", "TestSuites*"]
+
+# ---- 代码规范 ----
+# ⚠️ 注意：flake8 **不支持**从 pyproject.toml 读配置（这是它的已知限制，
+#    只认 .flake8 / setup.cfg / tox.ini）。所以代码规范规则仍在：
+#        ./flake8
+#    这里不再重复一份 —— 避免"看起来配了两处、实际只有一处生效"的错觉。
+#    唯一来源：工程根目录的 .flake8
+
+# ---- 类型检查 ----
+# 说明：本工程历史上没有类型标注（14829 行只有 1 个 ->）。
+# 全面加标注工作量极大，所以采取**渐进式**策略：
+#   1. 先在框架核心层（Common/basePage、config、runner）开启严格检查
+#   2. 其余模块只报"会引发运行时错误"的类别，避免噪音淹没真问题
+[tool.mypy]
+python_version = "3.9"
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+no_implicit_optional = true
+# 关键：不允许"函数声明返回 X 却隐式返回 None"（这是最容易埋坑的一类）
+warn_no_return = true
+# 不要求为所有函数加标注（否则第一天就有上千条错误，没人会去修）
+disallow_untyped_defs = false
+# 但必须检查已有标注的函数体是否正确
+check_untyped_defs = true
+ignore_missing_imports = true
+exclude = ["Common/HTMLTestReportCN\\.py$"]
+
+# ---- 覆盖率 ----
+# 只统计框架层（被测系统的 UI 用例要开浏览器，不纳入覆盖率统计）
+[tool.coverage.run]
+source = ["Common", "PageObject"]
+omit = [
+    "Common/HTMLTestReportCN.py",   # 第三方报告模板
+    "*/tests/*",
+]
+branch = true
+
+[tool.coverage.report]
+# ★ 覆盖率阈值：低于它就失败（CI 靠这个卡口）。
+#   实测值（2026-10-11，Python 3.11 / coverage 7.5.3）：85%。
+#   取 82 是留一点正常波动余量 —— 阈值贴着实测值设，会让"加了几行新代码
+#   还没写测试"就红，反而促成"随手降阈值"的坏习惯。
+#
+#   ★ 与定位门禁同一思路：**只能往上调，不能往下降**。
+#     想降阈值必须先解释"为什么覆盖能力退化了"，而不是直接改数字。
+#
+#   当前覆盖最低的三个模块（后续补测的重点）：
+#     PageObject/loginPage.py      51%   需要真实页面，单测覆盖有限
+#     PageObject/genericPage.py    52%
+#     Common/parallelRunner.py     52%   多进程分支难以单测
+fail_under = 82
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+]
+
+[tool.coverage.xml]
+output = "Report/coverage.xml"
+
+[tool.coverage.html]
+directory = "Report/coverage-html"
