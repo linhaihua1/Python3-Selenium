@@ -91,6 +91,23 @@ check_untyped_defs = true
 ignore_missing_imports = true
 exclude = ["Common/HTMLTestReportCN\\.py$"]
 
+# ---- pytest（第二执行引擎，unittest 用例原生兼容）----
+# 本工程原生入口是 run.py（unittest + HTMLTestReportCN 双报告 + 三道闸门）；
+# pytest 作为开发期第二引擎：-k 单条重跑、--collect-only 快速验证、断点调试更顺手。
+# 详细取舍见根目录 conftest.py 的模块说明。
+[tool.pytest.ini_options]
+# ★ 用例文件名是 testLogin.py（无下划线），必须放宽默认的 test_*.py 规则，
+#   否则 TestSuites/ 一条都收集不到（这是 pytest 适配的第一个坑，实测踩过）
+python_files = ["test*.py"]
+# 单测与 UI 用例的默认根；命令行显式传路径时以传参为准
+testpaths = ["tests", "TestSuites"]
+# 收集/断言失败的简短摘要（-ra = 除 passed 外全部列出）
+addopts = "-ra"
+# 让 pytest 的告警别淹没在自定义告警里（工程自定义告警已按需过滤）
+filterwarnings = [
+    "ignore::pytest.PytestCollectionWarning",
+]
+
 # ---- 覆盖率 ----
 # 只统计框架层（被测系统的 UI 用例要开浏览器，不纳入覆盖率统计）
 [tool.coverage.run]

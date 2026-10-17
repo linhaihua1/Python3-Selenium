@@ -350,6 +350,17 @@ python -m flake8                                    # 代码规范
 python -m mypy Common/                              # 类型检查
 python -m coverage run --source=Common,PageObject -m tests.run_unit_tests
 python -m coverage report                           # 覆盖率（阈值 82%）
+
+# ---- pytest 引擎（第二执行引擎，unittest 用例原生兼容）----
+#   ★ 与 run.py 互补：run.py = CI 完整报告链路（双报告+归因+趋势+三道闸门+preflight）；
+#     pytest = 开发期快跑（-k 单条重跑、--collect-only 快速验证、断点调试更顺手）。
+#     配置在 pyproject.toml [tool.pytest.ini_options]；适配层在根 conftest.py。
+pytest tests/                                       # 框架 755 项单测（不开浏览器）
+pytest TestSuites/ --collect-only -q                # 只看收集结果（不执行）
+pytest TestSuites/ --suite smoke --collect-only -q  # 冒烟集（对齐 run.py --suite smoke）
+pytest TestSuites/ -k test_1login                   # 单条重跑（pytest 的强项）
+pytest TestSuites/ --junitxml Report/junit-pytest.xml \
+       --html Report/pytest.html --self-contained-html   # 标准双报告
 ```
 
 **参数优先级**：`命令行 / 环境变量` > `config.ini` > `代码默认值`。

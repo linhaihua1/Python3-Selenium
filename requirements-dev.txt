@@ -30,9 +30,15 @@
 #         pre-commit run --all-files
 #    6. 元素定位规范门禁（不需要额外依赖，工程内置）
 #         python -m Common.locator_policy --fail-over 10
+#    7. pytest 第二执行引擎（配置在 pyproject.toml [tool.pytest.ini_options]，
+#       适配层在根目录 conftest.py；与 unittest 引擎互补，见其模块头说明）
+#         pytest tests/                            # 框架 755 项单测
+#         pytest TestSuites/ --suite smoke --collect-only -q   # 冒烟集收集
+#         pytest TestSuites/ -k test_1login        # 单条重跑
 #
 #  【规则配置在哪】
-#    统一在工程根的 pyproject.toml（[tool.flake8] / [tool.mypy] / [tool.coverage.*]）。
+#    统一在工程根的 pyproject.toml（[tool.flake8] / [tool.mypy] / [tool.coverage.*]
+#    / [tool.pytest.ini_options]）。
 #    收敛到一处是为了避免"CI 没读到配置、悄悄用默认值跑"这类门禁失效问题。
 #    规则是"工程约定"的落地，不要随手改松。
 # ==========================================================================
@@ -44,3 +50,5 @@ coverage[toml]
 mypy
 pre-commit
 pip-audit
+pytest
+pytest-html
