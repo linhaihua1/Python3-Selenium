@@ -178,6 +178,8 @@ Jenkins 直接用它判定构建成败。详见 [CI-CD 接入指南](docs/CI-CD�
 ├── config.ini                  本地配置（含账号密码，已 gitignore）
 ├── config.ini.example          配置模板（入库）
 ├── run.py                      唯一入口（参数解析 + 配置档翻译）
+├── verify_enterprise.py        ★ 企业级功能验收矩阵（20 项端到端，发布前跑）
+├── conftest.py                 pytest 适配层（第二执行引擎，unittest 用例原生兼容）
 ├── Jenkinsfile                 Jenkins 声明式流水线
 ├── Dockerfile                  容器化运行环境（Chromium + 中文字体）
 ├── requirements.txt            运行依赖（只需要 selenium）
@@ -287,7 +289,7 @@ log1.info('执行：%s' % x)                # 单参数 -> 放
 
 ```bash
 python -m flake8                                    # 代码规范（0 输出 = 通过）
-python tests/run_unit_tests.py                      # 框架单测 755 项 / 13 秒
+python tests/run_unit_tests.py                      # 框架单测 756 项 / 13 秒
 python -m coverage run --source=Common,PageObject -m tests.run_unit_tests \
     && python -m coverage report                   # 覆盖率（阈值 82%）
 python -m Common.locator_policy --fail-over 10      # 定位门禁（绝对路径必须 0）
@@ -299,7 +301,7 @@ pre-commit install                                  # 装一次，之后每次 c
 
 | 门禁 | 阈值 | 只能…… |
 |---|---|---|
-| 覆盖率 | 82%（实测 86%） | 只升不降 |
+| 覆盖率 | 82%（实测 87%） | 只升不降 |
 | 脆弱定位 | 10 条（实测 10） | 只降不升 |
 | 绝对路径 xpath | **0 条** | 红线，一条都不许有 |
 | 业务数据硬编码 | 0 处（**AST 规则级扫描**，换任何业务词都生效） | 红线 |
@@ -345,6 +347,11 @@ python -m Common.ci                                # 查看当前 CI 上下文
 python -m Common.locator_policy --issues           # 看元素表里哪些定位很脆弱
 python run.py --help                               # 全部参数
 
+# ---- 企业级功能验收（发布前 / 大改后跑一次）----
+python verify_enterprise.py                        # 20 项端到端矩阵（沙盒：不开浏览器、不连外网）
+                                                   # 逐项验证双报告/退出码/三道闸门/级联跳过/取证/趋势/
+                                                   # 并行/数据驱动/[elements]/归因/preflight 等，输出 PASS/FAIL
+
 # ---- 质量门禁（本地自检，与 CI 同一套）----
 python -m flake8                                    # 代码规范
 python -m mypy Common/                              # 类型检查
@@ -355,7 +362,7 @@ python -m coverage report                           # 覆盖率（阈值 82%）
 #   ★ 与 run.py 互补：run.py = CI 完整报告链路（双报告+归因+趋势+三道闸门+preflight）；
 #     pytest = 开发期快跑（-k 单条重跑、--collect-only 快速验证、断点调试更顺手）。
 #     配置在 pyproject.toml [tool.pytest.ini_options]；适配层在根 conftest.py。
-pytest tests/                                       # 框架 755 项单测（不开浏览器）
+pytest tests/                                       # 框架 756 项单测（不开浏览器）
 pytest TestSuites/ --collect-only -q                # 只看收集结果（不执行）
 pytest TestSuites/ --suite smoke --collect-only -q  # 冒烟集（对齐 run.py --suite smoke）
 pytest TestSuites/ -k test_1login                   # 单条重跑（pytest 的强项）
@@ -455,12 +462,15 @@ python tests/run_unit_tests.py --junit Report/unit-tests.xml   # 流水线用
 ```
 
 - 退出码与 `run.py` 一致：`0` 通过、`1` 有失败
-- 当前覆盖 **755 项 / 33 个模块**：配置、必填配置门禁、**业务数据 AST 门禁**、
+- 当前覆盖 **756 项 / 33 个模块**：配置、必填配置门禁、**业务数据 AST 门禁**、
   日志、CI 适配、元素表、基类、执行器、JUnit 报告、报告模板、邮件、页面对象、
-  用例层结构、命令行入口、测试基座自检等
+  用例层结构、命令行入口、测试基座自检、**依赖级联跳过集成**等
 - 全程 13 秒左右，跑完不留痕：不写工程 `Logs/`、不在系统临时目录留垃圾目录
   （日志走 `UI_LOG_DIR` 重定向，临时目录登记到 `atexit` 统一回收）
 - 流水线里的 `框架单元测试` stage 已经接好（见 `Jenkinsfile`），比 UI 用例更早发现问题
+- ★ **单测全绿 ≠ 功能可用**：模块间集成点可能无人看守（`@depends_on` 主链路失效 bug
+  就是 755 项全绿时漏掉的）。发布前/大改后请跑 `python verify_enterprise.py`
+  （20 项端到端验收矩阵，详见 docs/使用文档.md 8.8）
 
 > 数字别照着抄 —— 用 `python tests/run_unit_tests.py` 现跑一次为准。
 > 历史上这里写的是「350 项」，早已过时（说明手工维护的数字必然漂移）。
@@ -535,8 +545,12 @@ python tests/run_unit_tests.py --junit Report/unit-tests.xml   # 流水线用
   `python -m Common.locator_policy --fail-over 13` 卡口。建议逐条替换为
   id / 可见文字 / 属性定位。
 - 因用例强串行依赖，**不适合**做单用例失败重试；`Common/dependency.py`
-  提供了失败级联跳过（前置挂了后继直接 skip，不再连坐报错），
+  提供了失败级联跳过（前置挂了后继直接 skip，不再连坐报错；
+  ★ 2026-10-17 功能验收矩阵抓出并修复了该机制在主链路的集成缺陷，
+  现有集成防回退单测看守），6 条示例用例尚未声明 `@depends_on`，
   彻底解耦后即可引入失败重试。
+- **单测全绿 ≠ 功能可用**：模块间的集成点可能无人看守（见上一条的教训）。
+  发布前/大改后请跑 `python verify_enterprise.py`（20 项端到端验收矩阵）。
 - `config.ini` 本地为明文，建议本机也不要放生产账号；CI 上统一用 Jenkins 凭据。
 - 历史遗留文件已清理：`Common/HTMLTestRunnerNew.py`、`Common/configTest.py`、
   `Common/logTest.py`、`PageObject/homePage.py`、`TestSuites/testHome.py`。
