@@ -227,8 +227,23 @@ class TestPreCommitConfig(unittest.TestCase):
                       'pre-commit 应包含元素定位规范钩子（本工程特有，防定位劣化）')
 
     def test_有业务数据门禁(self):
-        self.assertIn('test_config_required', self.source,
+        self.assertIn('no-business-data', self.source,
                       'pre-commit 应包含"业务数据不得硬编码"的钩子')
+
+    def test_业务数据门禁用的是规则级AST扫描(self):
+        """★ 门禁的实现方式本身就是一条工程标准。
+
+        旧版钩子跑的是 tests/test_config_required，而那个文件里的
+        BANNED_LITERALS 是一份**枚举式黑名单**（6 个具体业务词）——
+        换一套业务名（比如「教务管理系统」）硬编码照样能混进去，
+        门禁形同虚设，还给出虚假的安全感。
+        大厂的做法是规则级扫描：不依赖任何具体业务词。
+        """
+        self.assertIn('test_no_hardcoded_data', self.source,
+                      '业务数据门禁应使用规则级 AST 扫描（tests/test_no_hardcoded_data）')
+        # 同时保留第二道防线：历史业务词仍需被锁住
+        self.assertIn('test_config_required', self.source,
+                      '应保留历史业务词的锁定（第二道防线）')
 
     def test_定位门禁阈值与Jenkinsfile一致(self):
         """★ 提交钩子与 CI 用同一阈值，否则本地过了 CI 挂（或反之）。"""
@@ -266,6 +281,21 @@ class TestCiGatesAreReal(unittest.TestCase):
             '    门禁如果不能保证生效，就不配叫门禁。请让它直接失败（exit 2）')
         self.assertIn('【门禁失败】未安装 flake8', self.jenkins,
                       'flake8 缺失时应有明确的失败提示，而不是继续往下跑')
+
+    def test_包含定位门禁(self):
+        self.assertIn('locator_policy --fail-over', self.jenkins,
+                      'Jenkinsfile 应包含元素定位规范检查（防止定位质量劣化）')
+
+    def test_包含业务数据硬编码门禁(self):
+        """★ 业务数据硬编码是本工程的核心红线，必须在 CI 上有独立 stage。
+
+        缺了它，"换系统只改配置"这条原则就失去了强制手段 ——
+        全靠人自觉，第二次改代码时一定会漏。
+        """
+        self.assertIn('test_no_hardcoded_data', self.jenkins,
+                      'Jenkinsfile 应包含业务数据硬编码的 AST 扫描 stage')
+        self.assertIn('业务数据硬编码', self.jenkins,
+                      '该 stage 应有中文名字，让人一眼看懂它在拦什么')
 
     def test_包含覆盖率门禁(self):
         self.assertIn('coverage', self.jenkins,

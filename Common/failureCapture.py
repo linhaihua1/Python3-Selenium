@@ -91,7 +91,16 @@ def resolve_dir(out_dir=None):
     if not Config.get_bool('ci', 'artifacts', True):
         return None, False
 
-    raw = out_dir or Config.get('ci', 'artifacts_dir', 'Report/artifacts')
+    # 目录取值：优先 config.ini [ci] artifacts_dir；
+    # 未配置时回退到 dir_config 的单一来源（artifacts_dir），
+    # 避免 'Report/artifacts' 这个相对路径在两处各写一遍、改了一处漏另一处。
+    if out_dir:
+        raw = out_dir
+    else:
+        raw = Config.get('ci', 'artifacts_dir', '')
+        if not raw:
+            configured = dir_config.artifacts_dir
+            raw = os.path.relpath(configured, dir_config.base_dir)
     if not os.path.isabs(raw):
         raw = os.path.join(dir_config.base_dir, raw)
     # normpath 归一化路径分隔符：配置里习惯写 'Report/artifacts'（正斜杠），

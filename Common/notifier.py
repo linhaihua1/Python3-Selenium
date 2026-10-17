@@ -41,6 +41,12 @@ import urllib.request
 from Common.config import Config
 from Common.log import log1
 
+#: 通知消息的标题前缀兜底值。
+#: 正常取值来自 config.ini -> [notify] title。之所以留一个中性兜底：
+#: 群通知属于"锦上添花"的能力，不该因为配置缺一项就让整轮测试失败。
+#: 但它必须保持中性 —— 写死系统名会让换系统后的群消息标题误导人。
+DEFAULT_NOTIFY_TITLE = 'UI 自动化测试'
+
 
 def _is_dingtalk(webhook):
     return 'oapi.dingtalk.com' in webhook
@@ -99,7 +105,7 @@ def notify(summary, webhook=None, secret=None, title=None):
         log1.info('未配置通知 webhook（config.ini [notify] webhook），跳过推送')
         return False
     secret = secret if secret is not None else Config.get('notify', 'secret', '')
-    title = title or Config.get('notify', 'title', 'UI 自动化测试')
+    title = title or Config.get('notify', 'title', DEFAULT_NOTIFY_TITLE)
 
     text = _build_message(summary, title)
     url = webhook

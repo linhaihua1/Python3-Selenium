@@ -133,7 +133,7 @@ def _run_shard(modules, run_kwargs):
     """
     # 子进程独立写自己的 HTML 报告（文件名带分片序号，避免互相覆盖）
     shard_index = run_kwargs.pop('__shard_index', 0)
-    title = run_kwargs.get('title') or Config.get('report', 'title', 'UI 自动化测试报告')
+    title = run_kwargs.get('title') or Config.get('report', 'title', runner.DEFAULT_TITLE)
     report_name = 'parallel_shard_%d.html' % shard_index
 
     summary = runner.run(

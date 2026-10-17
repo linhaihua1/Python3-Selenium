@@ -135,14 +135,37 @@ class TestAuth(unittest.TestCase):
         self.assertEqual(api.token, 'NESTED')
 
     def test_登录默认复用UI层的账号密码(self):
-        """★ 账号只维护一处：接口层默认读 [testcase]，避免两处漂移。"""
+        """★ 账号只维护一处：接口层默认读 [testcase]，避免两处漂移。
+
+        注意配置里必须带上 [api] token_field ——
+        它现在是必填项（代码里不再兜底 'token'），
+        所以"只读账号不读令牌字段"的写法在真实配置里是不成立的。
+        """
         api = _make_client()
         with patch_config(ini_text=(
-                '[testcase]\nlogin_username = api_user\nlogin_password = api_pwd\n')):
+                '[testcase]\nlogin_username = api_user\nlogin_password = api_pwd\n'
+                '[api]\ntoken_field = token\n')):
             with mock.patch.object(api, 'post', return_value={'token': 'T'}) as post:
                 api.login('/api/login')
         self.assertEqual(post.call_args[0][1],
                          {'username': 'api_user', 'password': 'api_pwd'})
+
+    def test_令牌字段缺失时明确报错(self):
+        """★★ 反向断言：token_field 不再有代码兜底，缺失必须报错。
+
+        旧版兜底成 'token'，换系统（返回 access_token 之类）忘了改配置时，
+        会静默取不到令牌、后续所有带鉴权的请求 401，
+        报出来的却是"未取得令牌"，把排查方向完全带偏。
+        """
+        api = _make_client()
+        with patch_config(ini_text='[testcase]\nlogin_username = u\nlogin_password = p\n'):
+            with mock.patch.object(api, 'post', return_value={'token': 'T'}):
+                with self.assertRaises(ValueError) as ctx:
+                    api.login('/api/login', {'u': 1, 'p': 1})
+        self.assertIn('token_field', str(ctx.exception),
+                      '报错信息应指出缺的是 [api] token_field')
+        self.assertIn('UI_API_TOKEN_FIELD', str(ctx.exception),
+                      '报错信息应给出环境变量名，便于 CI 注入')
 
     def test_找不到令牌字段时只告警不中断(self):
         """有些接口不需要认证，不该因为没返回 token 就崩。"""

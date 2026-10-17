@@ -13,7 +13,8 @@
 |---|---|---|
 | `Common/` | **框架层**，与被测系统无关 | 一行都不用改 |
 | `PageObject/genericPage.py` | 配置驱动的通用页面对象 | 一行都不用改 |
-| `PageObject/loginPage.py`<br>`Common/elementPage.py`<br>`TestSuites/*.py` | **示例业务**：某个融媒体生产系统的登录/素材库流程 | 整体替换 |
+| `Common/elementPage.py` | 元素表：定位值的**默认值**（可被 `config.ini [elements]` 逐条覆盖） | 优先在 `[elements]` 段覆盖，零代码 |
+| `PageObject/loginPage.py`<br>`TestSuites/*.py` | **示例业务**：某个融媒体生产系统的登录/素材库流程 | 整体替换 |
 
 **框架层不知道被测的是什么系统**，它只提供执行、配置、日志、报告、浏览器操作这些能力。
 所有业务差异都被挡在配置与薄薄一层页面对象里。
@@ -135,7 +136,7 @@ Jenkins 直接用它判定构建成败。详见 [CI-CD 接入指南](docs/CI-CD�
 ├── Common/                     公共层
 │   ├── basePage.py             基类：浏览器、定位、交互、上传、截图（唯一直接调 Selenium）
 │   │├── 第七节跨系统通用能力    按文字/placeholder/属性定位、表格行定位、遮罩等待…
-│   ├── elementPage.py          元素表：示例业务的 xpath（换系统时整体替换）
+│   ├── elementPage.py          元素表：定位默认值 + [elements] 配置覆盖层（接新系统只改配置）
 │   ├── runner.py               执行器：收集用例 → [三道闸门] → 执行 → HTML 报告 + JUnit XML
 │   ├── config.py               config.ini 读写 + UI_* 环境变量覆盖
 │   ├── configOverWriter.py     定制 ConfigParser（保留键大小写 + 关闭 % 插值）
@@ -194,8 +195,8 @@ Jenkins 直接用它判定构建成败。详见 [CI-CD 接入指南](docs/CI-CD�
 | `TestSuites/` 用例层 | 调页面对象方法、写断言 | 不写 xpath、不直接点元素 |
 | `PageObject/` 页面对象层 | 一个方法 = 一个业务动作 | 不写断言、不出现 xpath 字符串 |
 | `Common/basePage.py` | 封装浏览器与元素操作 | 不掺业务逻辑 |
-| `Common/elementPage.py` | 只放元素定位值 | 不放业务代码 |
-| `Common/apiClient.py` | 封装 HTTP 细节 | 不做断言 |
+| `Common/elementPage.py` | 只放元素定位值 | 不放业务代码；定位值应优先用配置覆盖 |
+| `Common/apiClient.py` | 封装 HTTP 细节 | 不做断言；`login_path`/`token_field` 不留默认值 |
 
 一句话：**用例层管断言，页面对象管动作，基类管操作，元素表管定位。**
 
@@ -234,10 +235,45 @@ self.assertTrue(ok, '上传后行数未增加：%d -> %d' % (before, count))
 
 ### 5. 代码里不许有**业务数据**
 
-页面标题、查询关键字、表单字段值一律来自 `config.ini`，
-用 `Config.get_assert_value()` / `get_form_field()`（缺失即报错）。
+页面标题、查询关键字、表单字段值、**元素定位**一律来自 `config.ini`，
+用 `Config.get_required()` / `get_form_field()`（缺失即报错）。
 理由：留兜底默认值的话，换系统忘了改配置会拿旧系统的标题去比对，
-报出看不出原因的失败。门禁：`tests/test_config_required.py`
+报出看不出原因的失败。门禁：`tests/test_no_hardcoded_data.py`（规则级 AST 扫描）
+
+**元素定位也能配置化**（换系统零代码）——在 `config.ini` 加一段：
+
+```ini
+[elements]
+Username    = xpath://input[@name='userName']
+Sign_button = id:login-btn
+```
+
+取值优先级：`[elements]` > `elementPage.py` 里的默认值。
+没配的元素继续用默认值，所以不必把整张表抄一遍。
+
+### 5.1 门禁必须**规则级**，不能靠关键词枚举
+
+历史教训：业务数据门禁曾经写成 `BANNED_LITERALS = ('统一门户', '云媒资', ...)`
+这种枚举式黑名单 —— 它只认这 6 个词，换套业务名（"教务管理系统"）硬编码照样混得进来。
+**这是最危险的一种失效：看起来在管，实际不管，还给出虚假的安全感。**
+
+现在改为 AST 规则扫描：用 `ast` 把源码切成注释/文档字符串/可执行代码，
+只在可执行代码里找字符串字面量，再按"是否参与与被测系统比对"判定。
+换任何业务名都照样生效。
+
+判定要点（**首参数与末参数放行、只拦中间位置**）：
+
+```python
+self.assertEqual(actual, '旧系统标题', '标题不符')
+                          ↑序号1：期望值 = 业务数据 -> 拦
+                                       ↑序号2：失败消息 = 诊断文案 -> 放
+self.check_title('上传视频', expected)   # 首参数是用例名 -> 放
+log1.info('执行：%s' % x)                # 单参数 -> 放
+```
+
+> 门禁本身有**反向断言**（`test_门禁自身真的能检出违规`）：
+> 拿一段真实违规代码喂给扫描器必须报错，拿合规代码必须放行。
+> 否则就会出现"规则写错了也照样绿"的假门禁。
 
 ### 6. 断言失败要能**自动归因**
 
@@ -251,10 +287,11 @@ self.assertTrue(ok, '上传后行数未增加：%d -> %d' % (before, count))
 
 ```bash
 python -m flake8                                    # 代码规范（0 输出 = 通过）
-python tests/run_unit_tests.py                      # 框架单测 731 项 / 35 秒
+python tests/run_unit_tests.py                      # 框架单测 755 项 / 13 秒
 python -m coverage run --source=Common,PageObject -m tests.run_unit_tests \
     && python -m coverage report                   # 覆盖率（阈值 82%）
 python -m Common.locator_policy --fail-over 10      # 定位门禁（绝对路径必须 0）
+python -m unittest tests.test_no_hardcoded_data      # ★ 业务数据硬编码门禁（AST 规则级）
 python -m mypy Common/                              # 类型检查（渐进式）
 
 pre-commit install                                  # 装一次，之后每次 commit 自动跑
@@ -262,10 +299,10 @@ pre-commit install                                  # 装一次，之后每次 c
 
 | 门禁 | 阈值 | 只能…… |
 |---|---|---|
-| 覆盖率 | 82%（实测 87%） | 只升不降 |
+| 覆盖率 | 82%（实测 86%） | 只升不降 |
 | 脆弱定位 | 10 条（实测 10） | 只降不升 |
 | 绝对路径 xpath | **0 条** | 红线，一条都不许有 |
-| 业务数据硬编码 | 0 处 | 红线 |
+| 业务数据硬编码 | 0 处（**AST 规则级扫描**，换任何业务词都生效） | 红线 |
 | flake8 | 0 问题 | **缺失即失败**（不再静默跳过） |
 
 > 阈值统一记在 `pyproject.toml` 与 `Jenkinsfile`，
@@ -332,9 +369,15 @@ python -m coverage report                           # 覆盖率（阈值 82%）
 | 段 | 键 | 说明 |
 |---|---|---|
 | `[environment]` | `url` / `browser` | 被测地址；浏览器 chrome / firefox / edge |
-| `[testcase]` | `login_username` / `login_password` | 登录账号 |
+| `[testcase]` | `login_username` / `login_password` | 登录账号（**必填**） |
 | `[testcase]` | `upload_file` | 上传文件绝对路径（必须真实存在） |
 | `[testcase]` | `upload_mode` | `send_keys`（默认，推荐）/ `autoit` |
+| `[assert]` | `title_login` / `title_workbench` / `title_material` | 断言期望标题（**必填**，换系统只改这里） |
+| `[system]` | `username_placeholder` 等 | 登录页文案特征（**必填**，`GenericPage` 用） |
+| `[elements]` | 与元素表属性同名 | ★ 元素定位覆盖：`id:xxx` / `css:xxx` / `xpath://xxx`，接新系统零代码 |
+| `[api]` | `base_url` / `login_path` / `token_field` | 接口层（base_url 有值时后两项必填） |
+| `[safety]` | `guard` / `url_must_match` / `allow_write` | 环境守卫：拦住误连生产 |
+| `[env_名称]` / `[system_名称]` | — | 多环境档（`--env`）/ 多系统段（`--system`） |
 | `[report]` | `title` / `filename` / `tester` / `description` | 报告元信息 |
 | `[ci]` | `headless` | 无头开关（**流水线必须 true**） |
 | `[ci]` | `element_timeout` / `implicit_wait` | 等待时长，CI 慢时可调大 |
@@ -369,10 +412,11 @@ set UI_TESTCASE_LOGIN_PASSWORD=xxx                 # 覆盖密码（CI 上用凭
 | 冒烟子集（不写数据，可每次构建跑） | `--suite smoke` / `[ci] smoke_cases` |
 | 凭据注入（密码不落仓库） | `UI_TESTCASE_LOGIN_*` 环境变量覆盖 |
 | 构建上下文写进报告 | `Common/ci.py` |
-| 流水线定义与容器镜像 | `Jenkinsfile` / `Dockerfile` |
+| 流水线定义与容器镜像 | `Jenkinsfile`（9 个 stage：8 道门禁 + 冒烟）/ `Dockerfile` |
 | 操作自动重试（降偶发失败） | `BasePage.retry/safe_click` / `[ci] retry_times` |
 | 数据驱动用例（CSV/JSON/Excel） | `Common/dataDriver.py` |
 | 多系统一键切换 | `--system` / `[system_名称]` 段 |
+| 元素定位配置化（接新系统零代码） | `config.ini [elements]` 覆盖元素表 |
 | 群机器人结果通知 | `Common/notifier.py` / `--notify` |
 
 **5 步接入**：
@@ -400,9 +444,10 @@ python tests/run_unit_tests.py --junit Report/unit-tests.xml   # 流水线用
 ```
 
 - 退出码与 `run.py` 一致：`0` 通过、`1` 有失败
-- 当前覆盖 **731 项 / 32 个模块**：配置、必填配置门禁、日志、CI 适配、元素表、基类、
-  执行器、JUnit 报告、报告模板、邮件、页面对象、用例层结构、命令行入口、测试基座自检等
-- 全程 30 秒左右，跑完不留痕：不写工程 `Logs/`、不在系统临时目录留垃圾目录
+- 当前覆盖 **755 项 / 33 个模块**：配置、必填配置门禁、**业务数据 AST 门禁**、
+  日志、CI 适配、元素表、基类、执行器、JUnit 报告、报告模板、邮件、页面对象、
+  用例层结构、命令行入口、测试基座自检等
+- 全程 13 秒左右，跑完不留痕：不写工程 `Logs/`、不在系统临时目录留垃圾目录
   （日志走 `UI_LOG_DIR` 重定向，临时目录登记到 `atexit` 统一回收）
 - 流水线里的 `框架单元测试` stage 已经接好（见 `Jenkinsfile`），比 UI 用例更早发现问题
 

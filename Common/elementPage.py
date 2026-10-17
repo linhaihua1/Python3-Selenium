@@ -6,7 +6,25 @@
 
 【一句话说明】
     整个工程**所有**元素的定位信息都集中在这里，其他地方不许出现 xpath。
-    前端页面一改版，只改这一个文件。
+    前端页面一改版，优先改 config.ini 的 [elements] 段（一行代码都不用动）。
+
+【★ 定位值的真正来源：config.ini 的 [elements] 段】
+    本文件里的定位值是**默认示例**（对应仓库自带的示例业务），
+    会被 config.ini 逐条覆盖。取值优先级：
+
+        config.ini [elements]  >  本文件的默认值
+
+    接新系统的标准做法（零代码改动）：
+        1. 在 config.ini 加一段
+               [elements]
+               Username    = xpath://input[@name='userName']
+               Sign_button = id:login-btn
+        2. 跑 python run.py --cases test_1login 验证
+    没在 [elements] 里出现的元素，继续用本文件的默认值 ——
+    所以不需要把整张表抄一遍，只写自己关心的几条。
+
+    值的写法：`id:xxx` / `name:xxx` / `css:xxx` / `xpath://xxx`；
+    省略前缀时按 xpath 解析。对应环境变量：`UI_ELEMENTS_<键名>`。
 
 【在框架中的位置】
     Common/basePage.py 负责"怎么定位"，本文件只提供"定位什么"：
@@ -188,6 +206,124 @@ class Element1:
                 "//li[contains(@class,'el-select-dropdown__item') "
                 "or contains(@class,'option')]"
                 "[normalize-space(text())='%s']" % safe]
+
+
+# ---------------------------------------------------------------------------
+# ★★ 配置覆盖层：本模块真正的"数据来源"★★
+#
+# 【为什么需要这一层】
+#   改造前，换被测系统必须改 Common/elementPage.py 这个 .py 文件。
+#   这与工程的头号原则「换系统只改配置、一个 .py 都不用动」直接冲突 ——
+#   定位值本质上也是"被测系统的业务数据"，同样不该写死在代码里。
+#
+#   所以改成：**代码里的值只是默认值，config.ini 的 [elements] 段可以逐条覆盖**。
+#   接新系统时在 config.ini 里写自己的定位，一个字都不用碰 Python：
+#
+#       [elements]
+#       Username   = xpath://input[@name='userName']
+#       Sign_button= id:login-btn
+#       ...
+#
+#   值的格式（与 basePage.BY_MAP 的键一致）：
+#       id:xxx              -> ['id', 'xxx']
+#       css:#app .btn       -> ['css', '#app .btn']
+#       xpath://div[@id=1]  -> ['xpath', '//div[@id=1]']
+#   省略前缀时默认按 xpath 解析。
+#
+# 【为什么默认值仍要保留在代码里】
+#   1. 元素表要能被 Common/locator_policy.py 静态扫描（门禁靠读源码做定位评级）；
+#   2. tests/ 的元素表单测需要一个确定的基线；
+#   3. 新人 clone 下来不配任何东西也能看懂"这个工程大概在测什么"。
+#   但真正的取值优先级是「config.ini > 代码默认值」，
+#   所以一旦配了 [elements]，代码里的示例值就完全不参与运行。
+# ---------------------------------------------------------------------------
+def parse_locator_spec(spec):
+    """把配置里的一条定位写法解析成 [定位方式, 定位值]。
+
+    :param spec: 形如 'id:login-btn' / 'css:#app .btn' / 'xpath://div' / '//div'
+    :return: ['id', 'login-btn'] 这样的二元列表
+    :raise ValueError: 写法为空或无法识别时抛出，消息里带原文便于定位
+
+    为什么不在这里校验定位方式是否受支持：
+        BY_MAP 在 Common/basePage.py，import 它会把 selenium 依赖拉进来，
+        而元素表需要能被"不开浏览器、不装 selenium"地静态扫描。
+        合法性的校验交给 basePage._parse_selector（真正使用定位时才校验）。
+    """
+    text = str(spec or '').strip()
+    if not text:
+        raise ValueError('元素定位配置为空（写法应为 id:xxx / css:xxx / xpath:xxx）')
+    # 只在第一个冒号处切分：xpath 值里含有大量冒号（如 //a[@href='a:b']）
+    if ':' in text:
+        prefix, _, value = text.partition(':')
+        prefix, value = prefix.strip().lower(), value.strip()
+    else:
+        prefix, value = 'xpath', text
+    if not value:
+        raise ValueError('元素定位配置缺少定位值：%r' % spec)
+    return [prefix or 'xpath', value]
+
+
+def apply_config_overrides(target=None):
+    """用 config.ini 的 [elements] 段覆盖元素表里的定位值。
+
+    :param target: 要覆盖的元素表类；默认 Element1（传入其他类可复用于扩展元素表）
+    :return: 被覆盖的条目名列表（没配任何项时返回空列表）
+
+    ★ 未在配置里出现的元素**保持代码默认值不变** ——
+      这样接入新系统时只需要写自己关心的几条，不用把整张表抄一遍。
+    """
+    target = target or Element1
+    try:
+        # 延迟导入：元素表要能被静态工具读取，不能强制依赖配置模块的初始化时序
+        from Common.config import Config
+        if not Config.has_section('elements'):
+            return []
+        overridden = []
+        for key in Config.options('elements'):
+            raw = Config.get('elements', key)
+            if not raw or not str(raw).strip():
+                continue
+            if not hasattr(target, key):
+                log_missing(key)
+                continue
+            try:
+                setattr(target, key, parse_locator_spec(raw))
+            except ValueError as exc:
+                raise ValueError(
+                    'config.ini [elements] %s 的写法不合法：%s\n'
+                    '        正确写法示例：\n'
+                    '          Sign_button = id:login-btn\n'
+                    '          keyword     = css:#app .search input\n'
+                    '          save        = xpath://button[text()="保存"]\n'
+                    '          material    = //div[@id="app"]//span[text()="素材库"]'
+                    % (key, exc)) from exc
+            overridden.append(key)
+        if overridden:
+            from Common.log import log1
+            log1.info('元素表已由 config.ini [elements] 覆盖 %d 条：%s'
+                      % (len(overridden), '、'.join(overridden)))
+        return overridden
+    except ImportError:
+        # 配置模块不可用（例如只做静态扫描的工具在跑），保持默认值即可
+        return []
+
+
+def log_missing(key):
+    """配置里出现元素表中不存在的键时告警（不中断执行）。
+
+    多半是把段名或键名拼错了。与其在这里抛异常让整轮测试挂掉，
+    不如让它继续跑 —— 没被覆盖的元素用代码默认值，随后由门禁暴露出来。
+    """
+    try:
+        from Common.log import log1
+        log1.error('config.ini [elements] 里的键「%s」在元素表中不存在，已忽略。\n'
+                   '        请检查拼写；键名应与 Common/elementPage.py 的属性名完全一致。' % key)
+    except ImportError:
+        pass
+
+
+# 导入本模块时立即应用配置覆盖（保持"import 即生效"的直觉）
+apply_config_overrides()
 
 
 # ---------------------------------------------------------------------------

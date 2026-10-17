@@ -71,10 +71,17 @@ from Common.junitReport import JUnitResult, write_junit_xml
 from Common.log import log1
 from Common.testcase_meta import is_readonly
 
-# 兜底默认值：config.ini 里没配 [report] 段时用。
+# 报告元信息的兜底默认值。
+# 只在 config.ini 整个 [report] 段都缺失时才用得到（正常安装不会走到）。
 # 真实取值优先来自 config.ini [report]，可被命令行 --title/--filename 覆盖。
+#
+# ★ 这几个值刻意保持中性（不含任何系统名/业务名）：
+#   兜底里若写死"XX系统测试报告"，换系统后忘了改配置就会产出一份
+#   标题误导人的报告 —— 报告被邮件转发出去后更难纠正。
 DEFAULT_TITLE = 'UI 自动化测试报告'
 DEFAULT_FILENAME = 'UI自动化测试报告.html'
+DEFAULT_TESTER = 'ui-auto'
+DEFAULT_DESCRIPTION = 'Web UI 自动化测试'
 
 # ---------------------------------------------------------------------------
 # 退出码：CI 流水线就是靠这三个数字判断这次构建是好是坏，不要随意改动
@@ -491,8 +498,8 @@ def run(tests_dir=None, pattern='test*.py', title=None, report_name=None,
     title = title or Config.get('report', 'title', DEFAULT_TITLE)
     report_name = report_name or Config.get('report', 'filename', DEFAULT_FILENAME)
     # 执行人/描述优先取配置，配置也没有时用通用占位值（避免写死具体人名）
-    tester = tester or Config.get('report', 'tester', 'ui-auto')
-    description = description or Config.get('report', 'description', 'UI 自动化测试')
+    tester = tester or Config.get('report', 'tester', DEFAULT_TESTER)
+    description = description or Config.get('report', 'description', DEFAULT_DESCRIPTION)
     # 用户可能只传了 '报告' 没带后缀，这里补上，避免生成出没有后缀的文件
     if not report_name.lower().endswith('.html'):
         report_name += '.html'

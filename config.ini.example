@@ -239,17 +239,62 @@ title_material = 请填写业务页标题
 #   对应环境变量：UI_SYSTEM_USERNAME_PLACEHOLDER 等（UI_ + 段 + 键，全大写）
 # --------------------------------------------------------------------------
 [system]
+# ★ 本段前三个键是**必填**（GenericPage 用它们定位登录页）。
+#   代码里刻意不留默认值：旧版兜底成「请输入用户名/请输入密码/登录」，
+#   换系统后忘了改配置就会拿着这三个字去定位新系统 —— 而新系统的
+#   提示文字多半不是这四个字，于是报出「没有定位到元素」这种
+#   完全看不出真实原因（其实是配置没跟着换）的失败。
+#   现在缺失即报错，并明确告诉你要去本段补哪个键。
+#   对应环境变量：UI_SYSTEM_USERNAME_PLACEHOLDER 等
+#
 # 用户名输入框的占位提示文案（placeholder）。登录页那个灰色提示文字。
+# 按你自己系统的真实文案填，例如「请输入账号」「请输入登录账号」。
 username_placeholder = 请输入用户名
-# 密码输入框的占位提示文案
+# 密码输入框的占位提示文案，按真实文案填
 password_placeholder = 请输入密码
 # 登录按钮上显示的文字（click_by_text 按它点击；找不到会自动回车提交）
 login_button_text = 登录
 # 登录成功后页面上必然出现的文字，用来等登录完成。如「退出」「工作台」「首页」。
-# 留空则改为等加载遮罩消失。
+# ★ 唯一允许留空的一项：留空表示"改为等加载遮罩消失"。
 success_text =
 # 元素定位默认超时（秒），与 [ci] element_timeout 保持一致即可
 element_timeout = 15
+
+
+# --------------------------------------------------------------------------
+# 【★ 元素定位覆盖 ★】接新系统最关键的一段 —— 改这里，一个 .py 都不用动
+# --------------------------------------------------------------------------
+#   Common/elementPage.py 里预置的是**示例业务**的定位（针对仓库自带的
+#   融媒体示例系统）。接你自己的系统时，在这里逐条覆盖即可。
+#
+#   取值优先级：  本段 > elementPage.py 里的默认值
+#   没在本段出现的元素，继续用代码里的默认值 ——
+#   所以不必把整张表抄一遍，只写自己关心的几条。
+#
+#   【写法】  定位方式:定位值
+#       id:login-btn                 -> ['id', 'login-btn']
+#       name:userName                -> ['name', 'userName']
+#       css:#app .login-btn          -> ['css', '#app .login-btn']
+#       xpath://input[@name='user']  -> ['xpath', "//input[@name='user']"]
+#       //input[@type='text']        -> 省略前缀时按 xpath 解析
+#   定位方式必须受 Common/basePage.py 的 BY_MAP 支持，否则运行时报错。
+#
+#   【键名】必须与 Common/elementPage.py 的属性名完全一致（区分大小写）。
+#   可覆盖的键见该文件，或执行  python -m Common.locator_policy  查看当前元素表。
+#   对应环境变量：UI_ELEMENTS_<键名，全大写>（如 UI_ELEMENTS_USERNAME）
+#
+#   【稳健性建议】优先级从高到低：
+#       id > name > 可见文字 > placeholder > 属性 > css > 相对 xpath
+#   绝对路径 xpath（以 /html 开头）不要用，前端多套一层 div 就失效。
+#   体检命令：python -m Common.locator_policy --issues
+# --------------------------------------------------------------------------
+[elements]
+# 示例（默认全部注释掉 = 使用 elementPage.py 里的示例定位）：
+# Username     = xpath://input[@type='text']
+# Password     = xpath://input[@type='password']
+# Sign_button  = xpath://div[@id='app']//button[text()='登录']
+# keyword      = css:#app .search-bar input
+# material     = xpath://span[normalize-space(text())='素材库']
 
 
 # --------------------------------------------------------------------------

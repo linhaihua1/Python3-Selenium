@@ -59,13 +59,26 @@ class GenericPage(BasePage):
             login_button_text     登录按钮的文字，如「登录」
             success_text          登录成功后页面必出现的文字，如「退出」/「工作台」
                                   （用于等登录完成；留空则不校验）
-        账号密码优先用参数，其次读 [testcase] login_username / login_password。
+        ★ 必填读取：登录页文案是**被测系统的业务数据**，代码里不留默认值。
+          历史上这里写过 Config.get('system', 'username_placeholder', '请输入用户名')，
+          换系统后忘了改配置，就会拿着「请输入用户名」去定位 ——
+          而新系统的提示文字多半不是这四个字，于是报出
+          「没有定位到元素」这种完全看不出真实原因（其实是配置没跟着换）的失败。
+          现在改成缺失即报错，并明确告诉你去 config.ini [system] 补哪个键。
         """
-        username = username or Config.get('testcase', 'login_username', '')
-        password = password or Config.get('testcase', 'login_password', '')
-        user_ph = Config.get('system', 'username_placeholder', '请输入用户名')
-        pwd_ph = Config.get('system', 'password_placeholder', '请输入密码')
-        btn_text = Config.get('system', 'login_button_text', '登录')
+        username = username or Config.get_required('testcase', 'login_username', '登录账号')
+        password = password or Config.get_required('testcase', 'login_password', '登录密码')
+        user_ph = Config.get_required(
+            'system', 'username_placeholder',
+            '用户名输入框的占位提示文案（如「请输入账号」）')
+        pwd_ph = Config.get_required(
+            'system', 'password_placeholder',
+            '密码输入框的占位提示文案（如「请输入密码」）')
+        btn_text = Config.get_required(
+            'system', 'login_button_text',
+            '登录按钮上的文字（如「登录」「立即登 录」）')
+        # success_text 是**唯一允许留空**的一项：留空表示"改为等加载遮罩消失"，
+        # 它是可选的判定条件而不是定位依据 —— 留个默认值反而会让人以为必须配。
         success_text = Config.get('system', 'success_text', '')
 
         self.type_by_placeholder(user_ph, username)

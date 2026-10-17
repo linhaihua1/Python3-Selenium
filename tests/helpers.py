@@ -74,6 +74,25 @@ video_author = 张三
 phone = 13800000000
 reporting = 深圳
 
+# ★ [system] 段：GenericPage 的登录页文案是**必填**读取（无代码默认值）。
+#   这里必须给全，否则所有走 GenericPage 的单测都会因"缺少必填配置"而失败 ——
+#   而那正是必填读取该有的行为。
+[system]
+username_placeholder = 请输入用户名
+password_placeholder = 请输入密码
+login_button_text = 登录
+success_text =
+element_timeout = 7
+
+# ★ [api] 段：接口层同样改为必填读取（login_path / token_field 不再有代码默认值）。
+[api]
+base_url = http://api.test-env.local
+login_path = /api/login
+token_field = token
+health_path = /api/health
+list_path = /api/materials
+timeout = 30
+
 [report]
 title = 单元测试报告
 filename = unit-report.html

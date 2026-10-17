@@ -117,16 +117,21 @@ class ApiClient(object):
                             不传则读 [testcase] 的账号密码（与 UI 层共用，避免两处维护）
         :return: 服务器返回的 JSON（dict）
 
-        令牌位置可配（[api] token_field，默认 'token'），因为不同系统
-        返回结构不一样（有的是 data.token，有的是 access_token）。
+        ★ 必填读取：登录接口路径与令牌字段名是**被测系统的业务数据**，
+          代码里不写默认值。旧版这里兜底成 '/api/login' 与 'token'，
+          换系统忘了改配置就会静默请求错误的路径，然后报出一个
+          「登录接口返回 404」这种指向错误方向的失败 ——
+          真实原因（路径没配对）被完全掩盖。
+          现在缺失即报错，并说明去 config.ini [api] 补哪个键。
         """
-        path = path or Config.get('api', 'login_path', '/api/login')
+        path = path or Config.get_required('api', 'login_path', '登录接口路径（如 /api/login）')
         if credentials is None:
             username, password = Config.get_account()
             credentials = {'username': username, 'password': password}
 
         data = self.post(path, credentials)
-        field = Config.get('api', 'token_field', 'token')
+        field = Config.get_required('api', 'token_field',
+                                    '令牌在返回体里的字段路径（如 token / data.token）')
         token = self._dig(data, field)
         if token:
             self.token = token

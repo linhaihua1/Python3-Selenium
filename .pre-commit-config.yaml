@@ -59,12 +59,24 @@ repos:
         files: ^Common/elementPage\.py$
 
       # ---- 业务数据不得进入代码（本工程已配置化的红线）----
+      #   ★ 这一钩子用的是**规则级 AST 门禁**（tests/test_no_hardcoded_data.py），
+      #     不依赖任何具体业务词，换任何系统都照样生效。
+      #     旧版只认 6 个固定词的枚举黑名单已被它取代 ——
+      #     那套规则换个业务名就失效，等于没有门禁。
       - id: no-business-data
-        name: 业务数据不得硬编码（必须来自 config.ini）
-        entry: python -m unittest tests.test_config_required -v
+        name: 业务数据不得硬编码（规则级 AST 扫描，必须来自 config.ini）
+        entry: python -m unittest tests.test_no_hardcoded_data -v
         language: system
         pass_filenames: false
         files: ^(TestSuites|PageObject|Common)/.*\.py$
+
+      # 第二道防线：锁定历史业务词，防止它们重新出现在配置模板里
+      - id: no-known-business-literals
+        name: 历史业务词不得出现在代码与配置模板中
+        entry: python -m unittest tests.test_config_required -v
+        language: system
+        pass_filenames: false
+        files: ^(TestSuites|PageObject|Common)/.*\.py$|^config\.ini\.example$
 
       # ---- 快速单测：不开浏览器，约 30 秒 ----
       #   想让提交更快可以先注释掉这一段，但**推上去之前请手动跑一次**。
