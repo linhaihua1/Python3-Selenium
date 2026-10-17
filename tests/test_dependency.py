@@ -97,5 +97,47 @@ class TestCascadeSkip(unittest.TestCase):
         self.assertFalse(guard(case, unittest.TestResult()))
 
 
+class TestDependencyRecorderIntegration(unittest.TestCase):
+    """★★ 集成回归：JUnitResult 必须经 MRO 触发依赖登记（2026-10-17 真 bug 防回退）。
+
+    历史缺陷：JUnitResult.addSuccess/addFailure 直接调 _TestResult.xxx，
+    绕过了 MRO 中间的 DependencyRecorderMixin —— dependency.record 永不执行，
+    @depends_on 在 run.py 主链路上静默失效（前置失败后继照样跑）。
+
+    为什么单元测试当初没拦住：test_dependency 只测 dependency 模块自身、
+    test_junit_report 只测 JUnitResult 自身，**两者之间的集成点**没人管。
+    本用例把两者接起来，直接复现"前置失败 -> 后继级联 skip"的主链路行为。
+    """
+
+    def setUp(self):
+        reset()
+
+    def test_JUnitResult触发依赖级联跳过(self):
+        from Common.junitReport import JUnitResult
+        from Common.dependency import _install_guard
+
+        class Flow(unittest.TestCase):
+            def test_a_fail(self):
+                self.fail('前置失败')
+
+            @depends_on('test_a_fail')
+            def test_b_depends(self):
+                pass
+
+        suite = unittest.TestSuite([
+            Flow('test_a_fail'),
+            _install_guard(Flow('test_b_depends')),   # runner 主链路就是这么装的
+        ])
+        # 用与 runner 相同的结果类跑（JUnitResult 的 MRO 即被测对象）
+        junit = JUnitResult(verbosity=0)
+        suite.run(junit)
+
+        self.assertEqual(len(junit.failures), 1, '前置应失败 1 条')
+        self.assertEqual(len(junit.skipped), 1,
+                         '后继依赖前置失败，必须级联 skip —— 若本断言失败，'
+                         '说明 JUnitResult 的 add* 又绕过了 DependencyRecorderMixin '
+                         '（直接调 _TestResult.xxx），@depends_on 在主链路上已静默失效')
+
+
 if __name__ == '__main__':
     unittest.main()

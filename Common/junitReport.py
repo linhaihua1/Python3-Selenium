@@ -159,13 +159,20 @@ class JUnitResult(_DependencyRecorderMixin, _TestResult):
 
     # ------------------------------------------------------------------ #
     # 四种结果：unittest 执行到对应分支时会回调这里
+    #
+    # ★ 必须用 super() 而不是 _TestResult.xxx：
+    #   MRO 是 JUnitResult -> DependencyRecorderMixin -> _TestResult，
+    #   中间层的 mixin 负责把结果登记进 Common/dependency 的结果表
+    #   （@depends_on 的失败级联跳过靠它）。历史上这里直接调 _TestResult，
+    #   把 mixin 绕过了 —— 单测测不到这个集成点，功能验证矩阵才抓出来：
+    #   现象是 @depends_on 声明了依赖、前置失败后继却照样执行。
     # ------------------------------------------------------------------ #
     def addSuccess(self, test):
-        _TestResult.addSuccess(self, test)      # 让 HTML 报告也能收到这条结果
+        super().addSuccess(test)                # 经 MRO：mixin 登记 -> _TestResult 记录
         self._record(test, 'success')
 
     def addFailure(self, test, err):
-        _TestResult.addFailure(self, test, err)
+        super().addFailure(test, err)           # 经 MRO：mixin 登记 -> _TestResult 记录
         # err 是 (异常类型, 异常对象, traceback)；拼成完整堆栈便于贴进缺陷单
         detail = ''.join(traceback.format_exception(*err))
         # 先取证再记录：取证要读"失败瞬间"的页面，晚一点页面可能已经变了
@@ -174,15 +181,14 @@ class JUnitResult(_DependencyRecorderMixin, _TestResult):
                      artifacts=artifacts)
 
     def addError(self, test, err):
-        _TestResult.addError(self, test, err)
+        super().addError(test, err)
         detail = ''.join(traceback.format_exception(*err))
         artifacts = self._capture(test, 'error')
         self._record(test, 'error', message=str(err[1]), detail=detail,
                      artifacts=artifacts)
 
     def addSkip(self, test, reason):
-        # 基类没有重写 addSkip，直接用 unittest 标准实现记录到 self.skipped
-        _TestResult.addSkip(self, test, reason)
+        super().addSkip(test, reason)           # 经 MRO：mixin 登记 -> _TestResult 记录
         self._record(test, 'skipped', message=str(reason))
 
 
