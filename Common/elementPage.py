@@ -10,9 +10,9 @@
 
 【★ 定位值的真正来源：config.ini 的 [elements] 段】
     本文件里的定位值是**默认示例**（对应仓库自带的示例业务），
-    会被 config.ini 逐条覆盖。取值优先级：
+    会被配置逐条覆盖。取值优先级（与全工程一致）：
 
-        config.ini [elements]  >  本文件的默认值
+        环境变量 UI_ELEMENTS_<键名>  >  config.ini [elements]  >  本文件的默认值
 
     接新系统的标准做法（零代码改动）：
         1. 在 config.ini 加一段
@@ -23,8 +23,14 @@
     没在 [elements] 里出现的元素，继续用本文件的默认值 ——
     所以不需要把整张表抄一遍，只写自己关心的几条。
 
+    ★ 只想在某个环境/流水线上覆盖几条时，用环境变量即可，配置文件不用改：
+        set UI_ELEMENTS_SIGN_BUTTON=id:login-btn
+        set UI_ELEMENTS_USERNAME=xpath://input[@name='userName']
+      （配置段里没写这一行也能生效 —— 覆盖项按环境变量反查元素名，
+        这对"定位随构建参数注入、仓库里不留 DOM 细节"的用法是必需的）
+
     值的写法：`id:xxx` / `name:xxx` / `css:xxx` / `xpath://xxx`；
-    省略前缀时按 xpath 解析。对应环境变量：`UI_ELEMENTS_<键名>`。
+    省略前缀时按 xpath 解析。
 
 【在框架中的位置】
     Common/basePage.py 负责"怎么定位"，本文件只提供"定位什么"：
@@ -106,6 +112,13 @@
         以及 Report/artifacts/日期/ 里框架自动保存的截图与页面源码。
 ==========================================================================
 """
+
+import os
+
+#: 元素定位的环境变量前缀：UI_ELEMENTS_<键名大写>
+#: 与 Common/config.py 的「UI_ + 段名 + _ + 键名」规则一致，这里单独列出是因为
+#: 还要反查出"配置段里没写、只给了环境变量"的那几项（见 _env_override_names）。
+ENV_ELEMENTS_PREFIX = 'UI_ELEMENTS_'
 
 
 class Element1:
@@ -263,11 +276,57 @@ def parse_locator_spec(spec):
     return [prefix or 'xpath', value]
 
 
+def _overridable_names(target):
+    """列出元素表里「可被配置覆盖的定位属性」：大写名 -> 属性名。
+
+    :param target: 元素表类（通常 Element1）
+    :return: 形如 {'SIGN_BUTTON': 'Sign_button', 'USERNAME': 'Username'}
+
+    只收录"值像一条定位"的属性（list/tuple），方法（如 first_trial_person）
+    与私有属性都不在其中 —— 它们是行为不是数据，配置不该去改。
+    """
+    mapping = {}
+    for name in dir(target):
+        if name.startswith('_'):
+            continue
+        value = getattr(target, name)
+        if callable(value) or not isinstance(value, (list, tuple)):
+            continue
+        mapping[name.upper()] = name
+    return mapping
+
+
+def _env_override_names(target):
+    """找出环境变量里声明了覆盖的元素名（UI_ELEMENTS_<键名大写>）。
+
+    :return: [(属性名, 环境变量名), ...]
+
+    ★ 为什么需要单独扫环境变量
+        config.ini 的 [elements] 段里"没写"的键，Config.options('elements')
+        就看不到，光靠遍历配置段无法发现"只在环境变量里给了定位"的情况。
+        而 CI 上恰恰是这种用法：定位随构建参数注入，配置文件保持干净
+        （不把被测系统的 DOM 细节写进仓库）。
+    """
+    mapping = _overridable_names(target)
+    found = []
+    for env_key in sorted(os.environ):
+        if not env_key.startswith(ENV_ELEMENTS_PREFIX):
+            continue
+        attr = mapping.get(env_key[len(ENV_ELEMENTS_PREFIX):].upper())
+        if attr is None:
+            log_missing(env_key[len(ENV_ELEMENTS_PREFIX):].lower(), source='环境变量 %s' % env_key)
+            continue
+        found.append((attr, env_key))
+    return found
+
+
 def apply_config_overrides(target=None):
-    """用 config.ini 的 [elements] 段覆盖元素表里的定位值。
+    """用配置覆盖元素表里的定位值。
 
     :param target: 要覆盖的元素表类；默认 Element1（传入其他类可复用于扩展元素表）
     :return: 被覆盖的条目名列表（没配任何项时返回空列表）
+
+    取值优先级（与全工程一致）：环境变量 > config.ini [elements] > 代码默认值。
 
     ★ 未在配置里出现的元素**保持代码默认值不变** ——
       这样接入新系统时只需要写自己关心的几条，不用把整张表抄一遍。
@@ -276,31 +335,32 @@ def apply_config_overrides(target=None):
     try:
         # 延迟导入：元素表要能被静态工具读取，不能强制依赖配置模块的初始化时序
         from Common.config import Config
-        if not Config.has_section('elements'):
-            return []
         overridden = []
-        for key in Config.options('elements'):
-            raw = Config.get('elements', key)
+        if Config.has_section('elements'):
+            for key in Config.options('elements'):
+                raw = Config.get('elements', key)
+                if not raw or not str(raw).strip():
+                    continue
+                if not hasattr(target, key):
+                    log_missing(key)
+                    continue
+                _apply_one(target, key, raw)
+                overridden.append(key)
+
+        # 只在环境变量里给的定位（配置文件里没有这一行）同样要生效
+        for attr, env_key in _env_override_names(target):
+            if attr in overridden:
+                continue
+            # 走统一链路取值：环境变量 > 配置文件，并尊重 UI_ENV_OVERRIDE=false
+            raw = Config.get('elements', attr)
             if not raw or not str(raw).strip():
                 continue
-            if not hasattr(target, key):
-                log_missing(key)
-                continue
-            try:
-                setattr(target, key, parse_locator_spec(raw))
-            except ValueError as exc:
-                raise ValueError(
-                    'config.ini [elements] %s 的写法不合法：%s\n'
-                    '        正确写法示例：\n'
-                    '          Sign_button = id:login-btn\n'
-                    '          keyword     = css:#app .search input\n'
-                    '          save        = xpath://button[text()="保存"]\n'
-                    '          material    = //div[@id="app"]//span[text()="素材库"]'
-                    % (key, exc)) from exc
-            overridden.append(key)
+            _apply_one(target, attr, raw)
+            overridden.append(attr)
+
         if overridden:
             from Common.log import log1
-            log1.info('元素表已由 config.ini [elements] 覆盖 %d 条：%s'
+            log1.info('元素表已由配置覆盖 %d 条：%s'
                       % (len(overridden), '、'.join(overridden)))
         return overridden
     except ImportError:
@@ -308,16 +368,34 @@ def apply_config_overrides(target=None):
         return []
 
 
-def log_missing(key):
+def _apply_one(target, key, raw):
+    """把一条配置写法解析并写到元素表上；写法非法时抛出带修复建议的错误。"""
+    try:
+        setattr(target, key, parse_locator_spec(raw))
+    except ValueError as exc:
+        raise ValueError(
+            'config.ini [elements] %s 的写法不合法：%s\n'
+            '        正确写法示例：\n'
+            '          Sign_button = id:login-btn\n'
+            '          keyword     = css:#app .search input\n'
+            '          save        = xpath://button[text()="保存"]\n'
+            '          material    = //div[@id="app"]//span[text()="素材库"]'
+            % (key, exc)) from exc
+
+
+def log_missing(key, source='[elements]'):
     """配置里出现元素表中不存在的键时告警（不中断执行）。
+
+    :param source: 该键来自哪里（配置文件段名或环境变量名），便于定位是哪里写错了
 
     多半是把段名或键名拼错了。与其在这里抛异常让整轮测试挂掉，
     不如让它继续跑 —— 没被覆盖的元素用代码默认值，随后由门禁暴露出来。
     """
     try:
         from Common.log import log1
-        log1.error('config.ini [elements] 里的键「%s」在元素表中不存在，已忽略。\n'
-                   '        请检查拼写；键名应与 Common/elementPage.py 的属性名完全一致。' % key)
+        log1.error('%s 里的键「%s」在元素表中不存在，已忽略。\n'
+                   '        请检查拼写；键名应与 Common/elementPage.py 的属性名完全一致。'
+                   % (source, key))
     except ImportError:
         pass
 
