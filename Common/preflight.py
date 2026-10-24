@@ -51,6 +51,7 @@ import re
 import shutil
 import subprocess
 import sys
+from typing import Dict, Optional, Tuple
 
 from Common import dir_config
 from Common.log import log1
@@ -66,7 +67,8 @@ LEVEL_ERROR = 'error'
 MIN_PYTHON = (3, 9)
 
 #: 本地临时发现的浏览器版本缓存：一次体检里多个检查都要用，避免重复探测
-_BROWSER_MAJOR_CACHE = {}
+#: 键是 (浏览器类型, 浏览器可执行文件路径)，值是主版本号
+_BROWSER_MAJOR_CACHE: Dict[Tuple[str, str], Optional[int]] = {}
 
 # --------------------------------------------------------------------------
 # 各浏览器在不同平台上的常见安装位置。

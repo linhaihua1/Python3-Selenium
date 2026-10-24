@@ -89,7 +89,18 @@ disallow_untyped_defs = false
 # 但必须检查已有标注的函数体是否正确
 check_untyped_defs = true
 ignore_missing_imports = true
-exclude = ["Common/HTMLTestReportCN\\.py$"]
+# ★ 排除规则不能写死正斜杠：mypy 用**当前系统的路径分隔符**去匹配，
+#   Windows 上是 Common\HTMLTestReportCN.py，写 'Common/...' 会匹配不到。
+#   所以只锚定文件名，路径分隔符交给 mypy 自己处理。
+exclude = ["HTMLTestReportCN\\.py$"]
+
+# ★★ 光有 exclude 不够 ★★
+#   exclude 只作用于"扫描目录时发现的文件"；被其他模块 import 的文件
+#   属于「跟随导入」，仍会被检查。第三方报告模板正是被 runner.py import 的，
+#   于是它的报错照旧冒出来（实测 8 条）。要真正跳过必须用 per-module 覆盖。
+[[tool.mypy.overrides]]
+module = "Common.HTMLTestReportCN"
+ignore_errors = true
 
 # ---- pytest（第二执行引擎，unittest 用例原生兼容）----
 # 本工程原生入口是 run.py（unittest + HTMLTestReportCN 双报告 + 三道闸门）；

@@ -345,15 +345,58 @@ def v_enforce_prod_safety():
                 os.environ[key] = old
 
 
+def _make_fake_driver(dir_path, version):
+    """在指定目录里造一个"只会报版本号"的假 WebDriver。
+
+    :param dir_path: 存放目录（会临时插到 PATH 最前面）
+    :param version:  假驱动对外宣称的版本号，如 '114.0.5735.90'
+    :return: 可执行文件的绝对路径
+
+    用途：复现"PATH 上的驱动与浏览器主版本不匹配"这个真实故障，
+    又不依赖这台机器当前的驱动状况。Windows 用 .bat（shutil.which 认 PATHEXT），
+    其他平台用带 x 权限的 shell 脚本。
+    """
+    if os.name == 'nt':
+        path = os.path.join(dir_path, 'chromedriver.bat')
+        with open(path, 'w', encoding='utf-8') as fp:
+            fp.write('@echo off\r\n')
+            fp.write('echo ChromeDriver %s (fake)\r\n' % version)
+    else:
+        path = os.path.join(dir_path, 'chromedriver')
+        with open(path, 'w', encoding='utf-8') as fp:
+            fp.write('#!/bin/sh\n')
+            fp.write('echo "ChromeDriver %s (fake)"\n' % version)
+        os.chmod(path, 0o755)
+    return path
+
+
 def v_preflight_real_problem():
-    """preflight 实测抓本机真实问题：PATH 上 chromedriver 114 vs Chrome 154。"""
+    """preflight 能抓出「PATH 上的驱动与浏览器主版本不匹配」。
+
+    ★ 为什么不直接体检本机
+        历史写法断言"本机一定有个 114 版驱动"，于是这条验收项**以机器坏着为前提**：
+        把环境修好之后它反而变红，看起来像框架坏了。验收矩阵必须能重复得到同一个结论，
+        所以改成注入一个版本固定的假驱动 + 固定的浏览器主版本，任何机器上都能复现。
+    """
     from Common import preflight
-    findings = preflight.collect(browser='chrome')
-    assert preflight.has_error(findings) is True, \
-        '本机驱动版本不匹配应被抓出（此前 --preflight 已证实）'
-    bad = [f for f in findings if f.level == preflight.LEVEL_ERROR]
-    assert bad and bad[0].detail, bad
-    return '抓到: %s' % bad[0].detail[:60]
+
+    with tempfile.TemporaryDirectory(prefix='verify_driver_') as tmp:
+        _make_fake_driver(tmp, '114.0.5735.90')
+        saved_path = os.environ.get('PATH', '')
+        original_major = preflight.browser_major
+        os.environ['PATH'] = tmp + os.pathsep + saved_path
+        preflight.browser_major = lambda *a, **k: 155      # 假装浏览器是 155
+        try:
+            finding = preflight.check_driver(browser='chrome')
+        finally:
+            preflight.browser_major = original_major
+            os.environ['PATH'] = saved_path
+
+    assert finding.level == preflight.LEVEL_ERROR, \
+        '驱动主版本不匹配应判为错误级，实际：%s / %s' % (finding.level, finding.detail)
+    assert '不匹配' in finding.detail, finding.detail
+    assert preflight.has_error([finding]) is True, '有 ERROR 级发现时 has_error 应为 True'
+    return '抓到: %s' % finding.detail[:60]
 
 
 def v_locator_policy():

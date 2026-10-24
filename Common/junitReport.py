@@ -48,6 +48,7 @@ import os
 import time
 import traceback
 import xml.etree.ElementTree as ET
+from typing import Any, Dict, List
 
 # 复用 HTML 报告器的结果类：JUnitResult 在它的基础上扩展，
 # 这样 HTMLTestRunner 可以直接拿本类当 resultclass 使用。
@@ -232,8 +233,8 @@ def write_junit_xml(result, path, suite_name='UI Automation Test', properties=No
     })
 
     # ---- 3. 按测试类分组，逐组生成 testsuite ----
-    groups = {}
-    order = []
+    groups: Dict[str, List[Dict[str, Any]]] = {}
+    order: List[str] = []
     for item in cases:
         key = item['classname']
         if key not in groups:

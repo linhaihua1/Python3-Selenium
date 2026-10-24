@@ -552,6 +552,10 @@ class BasePage:
         # 走到这里说明重试次数用尽；拍一张失败现场再用原始异常向上抛
         if capture:
             self._capture_failure_scene(action, selector)
+        if last_exc is None:
+            # 理论上到不了：只有"重试次数用尽且捕获过瞬时异常"才会走到这里。
+            # 兜底抛一个明确的异常，避免 raise None 这种难以解释的报错。
+            raise RuntimeError('%s失败，但未捕获到具体异常（请检查重试逻辑）' % action)
         raise last_exc
 
     def _capture_failure_scene(self, action, selector):

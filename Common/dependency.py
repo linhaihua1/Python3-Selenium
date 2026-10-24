@@ -30,6 +30,8 @@
 
 import unittest
 
+from typing import Dict
+
 from Common.log import log1
 
 #: 方法上挂依赖声明的属性名
@@ -37,7 +39,7 @@ _DEP_ATTR = '_ui_depends_on'
 
 #: 本次运行内的用例结果登记：{用例方法名: 'pass'|'fail'|'error'|'skip'}
 #  每次全量执行开始时由 runner 调 reset() 清空，避免跨次残留。
-_outcomes = {}
+_outcomes: Dict[str, str] = {}
 
 
 def reset():
@@ -138,19 +140,21 @@ class DependencyRecorderMixin(object):
 
     def addSuccess(self, test):
         self._record_from(test, 'pass')
-        super(DependencyRecorderMixin, self).addSuccess(test)
+        # 本类是"混入"，真正的 addSuccess 由与之组合的 TestResult 子类提供；
+        # 类型检查看不到那层继承关系，这里明确忽略（运行时行为不变）。
+        super(DependencyRecorderMixin, self).addSuccess(test)   # type: ignore[misc]
 
     def addFailure(self, test, err):
         self._record_from(test, 'fail')
-        super(DependencyRecorderMixin, self).addFailure(test, err)
+        super(DependencyRecorderMixin, self).addFailure(test, err)   # type: ignore[misc]
 
     def addError(self, test, err):
         self._record_from(test, 'error')
-        super(DependencyRecorderMixin, self).addError(test, err)
+        super(DependencyRecorderMixin, self).addError(test, err)   # type: ignore[misc]
 
     def addSkip(self, test, reason):
         self._record_from(test, 'skip')
-        super(DependencyRecorderMixin, self).addSkip(test, reason)
+        super(DependencyRecorderMixin, self).addSkip(test, reason)   # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------

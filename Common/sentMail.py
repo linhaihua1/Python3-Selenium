@@ -110,14 +110,16 @@ def sent_mail(report_path=None):
     try:
         # ---- 4. 组装邮件 ----
         message = MIMEMultipart()
-        message['From'] = formataddr([sender_name, sender_email])   # 显示成「张三 <xx@qq.com>」
+        message['From'] = formataddr((sender_name, sender_email))   # 显示成「张三 <xx@qq.com>」
         message['To'] = ';'.join(addressed_emails)                  # 多个收件人用分号连接
         message['Subject'] = '%s %s' % (rq, filename)               # 例：20260925 融媒...报告.html
         message.attach(MIMEText('附件为%s' % filename, 'plain', 'utf-8'))   # 正文
 
         # 读报告内容并作为附件：base64 编码 + 通用二进制类型
         with open(report_path, 'rb') as f:
-            att = MIMEText(f.read(), 'base64', 'utf-8')
+            # 附件是二进制，MIMEText 收 bytes 才能走 base64；类型标注写的是 str，
+            # 这里按运行时正确用法传 bytes（不是 bug，只是 stub 不覆盖这种用法）。
+            att = MIMEText(f.read(), 'base64', 'utf-8')   # type: ignore[arg-type]
         att['Content-Type'] = 'application/octet-stream'
         # 中文附件名的标准写法：先按 gbk 编码再交给 email 库
         att.add_header('Content-Disposition', 'attachment', filename=('gbk', '', filename))

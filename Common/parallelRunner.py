@@ -33,6 +33,7 @@
 
 import multiprocessing
 import os
+from typing import Any, Dict, List
 
 from Common import runner
 from Common.config import Config
@@ -56,7 +57,7 @@ def shard(items, n):
     if not items:
         return []
     n = max(1, min(n, len(items)))
-    buckets = [[] for _ in range(n)]
+    buckets: List[List[Any]] = [[] for _ in range(n)]
     for i, item in enumerate(items):
         buckets[i % n].append(item)
     return buckets
@@ -113,7 +114,7 @@ def list_test_files(tests_dir=None, pattern='test*.py'):
     """
     import fnmatch
     tests_dir = tests_dir or testcases_dir
-    files = []
+    files: List[str] = []
     if not os.path.isdir(tests_dir):
         return files
     for name in sorted(os.listdir(tests_dir)):
@@ -223,7 +224,13 @@ def _write_merged_junit(merged, path, title):
     from Common.junitReport import write_junit_xml
 
     class _MergedResult(object):
-        pass
+        # 只声明字段，不赋默认值：写 JUnit 的代码按属性取用，
+        # 声明后类型检查能看懂，运行时也不会因此在类上留下共享的可变对象。
+        cases: List[Dict[str, Any]]
+        testsRun: int
+        failures: List[Any]
+        errors: List[Any]
+        skipped: List[Any]
 
     cases = merged.get('cases', [])
     res = _MergedResult()

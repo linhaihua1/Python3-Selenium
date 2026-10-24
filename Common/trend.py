@@ -27,6 +27,7 @@
 import json
 import os
 import time
+from typing import Any, Dict
 
 from Common.log import log1
 
@@ -154,7 +155,9 @@ def trend(window=TREND_WINDOW):
     }
     """
     records = load_history(limit=window)
-    result = {
+    # 显式标注：值有 int 也有 float / str / None，不标注会被推断成
+    # dict[str, str | int | None]，后面的大小比较与取模都会被判错。
+    result: Dict[str, Any] = {
         'samples': len(records), 'latest': None, 'previous': None,
         'average': None, 'delta': None, 'direction': 'flat',
         'alert': False, 'message': '',

@@ -50,6 +50,7 @@ import ast
 import os
 import re
 import sys
+from typing import Dict
 
 # 定位条目形如：
 #     Username = ['xpath', "//input[@type='text']"]      # 用户名输入框
@@ -262,8 +263,8 @@ def rate_locator(by, value):
 def analyze(entries):
     """汇总统计，返回可直接展示的结构。"""
     total = len(entries) or 1
-    by_kind = {}
-    rating_count = {}
+    by_kind: Dict[str, int] = {}
+    rating_count: Dict[str, int] = {}
     for item in entries:
         by_kind[item['by']] = by_kind.get(item['by'], 0) + 1
         rating_count[item['rating']] = rating_count.get(item['rating'], 0) + 1

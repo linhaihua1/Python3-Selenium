@@ -44,6 +44,7 @@
 
 import os
 import time
+from typing import Any, Dict
 
 from Common.driverRegistry import get_active
 from Common.log import log1
@@ -123,8 +124,10 @@ def capture(test_id, driver=None, out_dir=None, tag='failure'):
 
     ★ 本函数不抛异常。任何一步失败都写进返回值的 error 字段。
     """
-    result = {'enabled': False, 'dir': None, 'screenshot': None,
-              'source': None, 'error': None}
+    # 显式标注：初值全是 None/bool，不标注会被推断成 dict[str, bool | None]，
+    # 后面往里放路径字符串就全成了类型错误。
+    result: Dict[str, Any] = {'enabled': False, 'dir': None, 'screenshot': None,
+                              'source': None, 'error': None}
 
     try:
         folder, enabled = resolve_dir(out_dir)

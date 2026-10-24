@@ -60,6 +60,7 @@ import os
 import re
 import time
 import unittest
+from typing import Any, Dict, List, Optional
 
 from Common import ci as ci_env
 from Common import env_guard
@@ -155,7 +156,8 @@ def classify_suite(suite):
         把用例按"会不会写数据"分开之后，框架就能做到
         「生产环境只放只读用例过去，写用例一律拦下」（见 Common/env_guard.py）。
     """
-    readonly_cases, write_cases = [], []
+    readonly_cases: List[unittest.TestCase] = []
+    write_cases: List[unittest.TestCase] = []
     for case in _iter_cases(suite):
         (readonly_cases if is_readonly(case) else write_cases).append(case)
     return readonly_cases, write_cases
@@ -321,6 +323,10 @@ def _load_modules(module_paths, top_dir):
             try:
                 mod_name = 'parallel_shard_mod_%d' % abs(hash(path))
                 spec = importlib.util.spec_from_file_location(mod_name, path)
+                if spec is None or spec.loader is None:
+                    # 路径不是合法 .py / 没有加载器：明确报出来，
+                    # 由下面的 except 转成"导入失败"占位用例，而不是抛 AttributeError
+                    raise ImportError('无法从路径加载用例模块：%s' % path)
                 module = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(module)
                 loaded = loader.loadTestsFromModule(module)
@@ -340,6 +346,9 @@ def _make_failed_test(name, exc):
     msg = '导入失败：%s' % (exc or name)
 
     class _FailedCase(unittest.TestCase):
+        # 与 unittest 内部的 _FailedTest 保持同名属性，供 find_broken_modules 检出
+        _exception: Optional[BaseException] = None
+
         def runTest(self):
             raise ImportError(msg)
 
@@ -745,7 +754,9 @@ def _summary(**kwargs):
     reason 字段：被中止时（exit_code=2）记录"为什么没跑"，例如
     "环境守卫拦截：疑似生产环境且包含写操作用例"。正常情况下为 None。
     """
-    summary = {
+    # 显式标注：字段类型不一（int / str / list / None），不标注会推断成
+    # dict[str, object|None]，调用方做算术或取下标时都会被判错。
+    summary: Dict[str, Any] = {
         'exit_code': EXIT_OK,
         'tests_run': 0,
         'failures': 0,

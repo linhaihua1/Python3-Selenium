@@ -31,6 +31,7 @@
 """
 
 import re
+from typing import Any, Dict
 
 # 分类常量
 LOCATOR = 'locator'
@@ -170,7 +171,9 @@ def summarize(cases):
     用途：在控制台与报告里给出「这批失败主要是什么性质」——
     看一行就知道该找谁，不必逐条读堆栈。
     """
-    result = {
+    # 显式标注：字典里混着 int / dict / None，不标注会被推断成 dict[str, object]，
+    # 于是 += 1、setdefault 这类正常操作全被类型检查判错。
+    result: Dict[str, Any] = {
         'total_failed': 0,
         'categories': {},
         'advice': {},

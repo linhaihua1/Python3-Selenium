@@ -29,10 +29,12 @@
 ==========================================================================
 """
 
+from typing import Any, List
+
 from Common.log import log1
 
 #: 已登记的 driver，按登记顺序排列；取用时总是取最后一个（最近创建的）
-_ACTIVE = []
+_ACTIVE: List[Any] = []
 
 #: 上限保护：正常流程不会堆积，堆起来说明 dr_quit 忘了调，留个线索
 MAX_KEEP = 10
