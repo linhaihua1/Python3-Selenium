@@ -241,9 +241,25 @@ class TestLogIsolationSetup(unittest.TestCase):
             '日志根目录必须挪出工程，否则等于没隔离')
 
     def test_工程logger只剩一个控制台handler(self):
-        """文件 handler 应被摘干净，否则测试会刷大量无意义的 ERROR 日志。"""
-        files = [h for h in log1.handlers if isinstance(h, logging.FileHandler)]
-        self.assertEqual(files, [])
+        """文件 handler 应被摘干净，否则测试会刷大量无意义的 ERROR 日志。
+
+        ★ 只统计「工程自己挂上去的」handler。
+          pytest 的 logging 插件会自行往 logger 上挂捕获用的 handler，
+          其中包含一个写 \\.\\nul 的 _FileHandler（Windows 上的空设备）。
+          它既不属于本工程的日志配置，也不影响"单元测试是否污染工程 Logs/"，
+          把它算进来会让同一条断言出现"unittest 通过、pytest 失败"的分歧
+          —— 两个执行引擎的结论必须一致，否则报出来的失败没人敢信。
+        """
+        def _by_project(handler):
+            """判断 handler 是否由工程代码（tests/__init__.py）挂上去的。"""
+            return not type(handler).__module__.startswith('_pytest')
+
+        handlers = [h for h in log1.handlers if _by_project(h)]
+        files = [h for h in handlers if isinstance(h, logging.FileHandler)]
+        self.assertEqual(files, [], '工程 logger 上不应残留文件输出：%s' % files)
+        self.assertEqual(
+            len(handlers), 1,
+            '工程 logger 应只剩一个控制台 handler，实际：%s' % handlers)
 
 
 if __name__ == '__main__':
